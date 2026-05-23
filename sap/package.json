@@ -1,0 +1,29 @@
+{
+  "name": "onchainbrief-sap",
+  "version": "1.0.0",
+  "description": "OnchainBrief — SAP on-chain agent registration shim",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "sap": "tsx src/register.ts",
+    "sap:plan": "tsx src/register.ts --plan",
+    "sap:mainnet": "tsx src/register.ts --mainnet",
+    "diag": "tsx src/diag.ts"
+  },
+  "dependencies": {
+    "@oobe-protocol-labs/synapse-sap-sdk": "0.4.1",
+    "@solana/web3.js": "^1.95.0",
+    "bn.js": "^5.2.1",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

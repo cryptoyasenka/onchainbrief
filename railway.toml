@@ -1,0 +1,12 @@
+# Railway deploy config.
+# Nixpacks auto-detects Python from requirements.txt / pyproject.toml.
+# Build renders the static feed (cold-start safe: emits a valid page even
+# with zero briefs). Start serves ./site over the platform-injected $PORT.
+
+[build]
+builder = "nixpacks"
+buildCommand = "pip install -r requirements.txt && python scripts/build_site.py"
+
+[deploy]
+startCommand = "python scripts/serve_feed.py"
+restartPolicyType = "always"
