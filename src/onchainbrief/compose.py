@@ -84,40 +84,64 @@ def compose_card(
                 fill=(8, 10, 16, a))
     card = Image.alpha_composite(base.convert("RGBA"), scrim)
 
+    # Rounded dark glass container at the bottom with a neon border
+    box_x0 = 48
+    box_y0 = CARD_H - 340
+    box_x1 = CARD_W - 48
+    box_y1 = CARD_H - 48
+    
+    overlay = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    
+    # Draw dark container (94% opaque) with a sleek neon border
+    od.rounded_rectangle(
+        [box_x0, box_y0, box_x1, box_y1],
+        radius=18,
+        fill=(8, 10, 16, 240),
+        outline=(139, 92, 246, 220), # Neon purple
+        width=3
+    )
+    
+    card = Image.alpha_composite(card, overlay)
     d = ImageDraw.Draw(card)
 
-    # 1. Headline: dynamically scale down font size if it is too long to prevent overflow
+    # 1. Headline
     headline_text = _strip_period(headline).upper()
-    font_size = 68
+    font_size = 54
     font = _font("bold", font_size)
     try:
-        while d.textlength(headline_text, font=font) > (CARD_W - 128) and font_size > 44:
+        while d.textlength(headline_text, font=font) > (box_x1 - box_x0 - 80) and font_size > 36:
             font_size -= 2
             font = _font("bold", font_size)
     except (AttributeError, TypeError):
-        # Fallback if textlength is not supported in this PIL version
-        if len(headline_text) > 18:
-            font_size = max(44, int(68 * 18 / len(headline_text)))
+        if len(headline_text) > 22:
+            font_size = max(36, int(54 * 22 / len(headline_text)))
             font = _font("bold", font_size)
 
-    d.text((64, CARD_H - 286), headline_text, font=font, fill=(255, 255, 255))
+    text_x = box_x0 + 40
+    d.text((text_x, box_y0 + 32), headline_text, font=font, fill=(255, 255, 255))
 
-    # 2. Subline: wrap and cleanly truncate with ellipsis if it exceeds 2 lines
-    subline_lines = textwrap.wrap(_strip_period(subline), width=64)
+    # 2. Subline
+    subline_lines = textwrap.wrap(_strip_period(subline), width=75)
     if len(subline_lines) > 2:
         subline_lines = subline_lines[:2]
         if not subline_lines[1].endswith("…"):
             subline_lines[1] = subline_lines[1].rstrip() + "…"
 
     for n, line in enumerate(subline_lines):
-        d.text((64, CARD_H - 196 + n * 44), line,
-               font=_font("regular", 34), fill=(208, 214, 226))
-    d.text((64, CARD_H - 86), f"sig {signature[:24]}…  ·  OnchainBrief",
-           font=_font("mono", 24), fill=(150, 200, 255))
+        d.text((text_x, box_y0 + 104 + n * 40), line,
+               font=_font("regular", 28), fill=(209, 213, 219))
+
+    # 3. Signatures / Metadata
+    sig_y = box_y1 - 76
+    d.text((text_x, sig_y), f"sig: {signature[:32]}…",
+           font=_font("mono", 20), fill=(103, 232, 249))
+
     if attestation is not None:
-        attest_sig, _cluster = attestation
-        d.text((64, CARD_H - 52), f"attest {attest_sig[:24]}…",
-               font=_font("mono", 22), fill=(140, 220, 180))
+        attest_sig, cluster = attestation
+        attest_y = box_y1 - 44
+        d.text((text_x, attest_y), f"attest ({cluster}): {attest_sig[:32]}…",
+               font=_font("mono", 18), fill=(52, 211, 153))
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

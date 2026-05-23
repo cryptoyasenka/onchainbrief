@@ -84,8 +84,8 @@ def run_brief(
 
     headline = _headline_for(ev)
     image_bytes = client.image(
-        f"minimal flat-design trading card visual for: {headline}; "
-        "clean, editorial, no text"
+        f"cyberpunk high-tech network schematic for: {headline}; "
+        "glowing data nodes, futuristic digital interface, dark background, premium cyberpunk 3D render, no text"
     )
 
     stem = ev.signature[:16]
