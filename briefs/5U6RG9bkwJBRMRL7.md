@@ -1,4 +1,4 @@
-# JUP6LkbZ on-chain move
+# JUPITER SWAP INTEGRATION & NATIVE INSTRUCTIONS
 
 ![card](5U6RG9bkwJBRMRL7.png)
 

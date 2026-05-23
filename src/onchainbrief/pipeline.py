@@ -77,12 +77,38 @@ def run_brief(
     out_dir = Path(out_dir)
     serp = client.serp(_query_for(ev))
 
-    narrative = client.chat(
-        "Write a tight 3-sentence market brief from this context. No hype, "
-        f"facts only.\n\nEvent sig: {ev.signature}\nContext:\n{serp.summary}"
+    chat_resp = client.chat(
+        "Analyze the following on-chain event context and write:\n"
+        "1. A short, descriptive, active title (3-5 words, e.g., 'JUPITER ROUTED LARGE USDC SWAP' or 'SOLANA CORE UPGRADE INITIALIZED'). Avoid generic titles.\n"
+        "2. A tight 3-sentence narrative market brief. No hype, facts only.\n\n"
+        "Format your response exactly like this:\n"
+        "TITLE: <Title here>\n"
+        "NARRATIVE: <Narrative here>\n\n"
+        f"Event sig: {ev.signature}\nContext:\n{serp.summary}"
     )
 
     headline = _headline_for(ev)
+    narrative = chat_resp
+
+    if "TITLE:" in chat_resp and "NARRATIVE:" in chat_resp:
+        try:
+            parts = chat_resp.split("NARRATIVE:", 1)
+            title_part = parts[0].replace("TITLE:", "").strip()
+            narrative_part = parts[1].strip()
+            if title_part and narrative_part:
+                headline = title_part
+                narrative = narrative_part
+        except Exception:
+            pass
+    elif "\n" in chat_resp:
+        lines = [l.strip() for l in chat_resp.splitlines() if l.strip()]
+        if len(lines) >= 2 and (lines[0].lower().startswith("title:") or lines[0].lower().startswith("headline:")):
+            try:
+                headline = lines[0].split(":", 1)[1].strip()
+                narrative = "\n".join(lines[1:]).replace("NARRATIVE:", "").replace("narrative:", "").strip()
+            except Exception:
+                pass
+
     image_bytes = client.image(
         f"cyberpunk high-tech network schematic for: {headline}; "
         "glowing data nodes, futuristic digital interface, dark background, premium cyberpunk 3D render, no text"

@@ -1,4 +1,4 @@
-# JUP6LkbZ on-chain move
+# SOLANA PROGRAM DEPLOYMENT & ANCHOR FRAMEWORK
 
 ![card](3KWgi7jPuD9FBUMf.png)
 

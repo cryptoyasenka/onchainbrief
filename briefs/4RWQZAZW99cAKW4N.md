@@ -1,4 +1,4 @@
-# JUP6LkbZ on-chain move
+# JUPITER PROGRAM ID SWAPS & COMPUTE BUDGETS
 
 ![card](4RWQZAZW99cAKW4N.png)
 
