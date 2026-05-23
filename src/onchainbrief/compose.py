@@ -70,78 +70,111 @@ def compose_card(
     attestation: tuple[str, str] | None = None,
 ) -> Path:
     if isinstance(base_image, bytes):
-        base = Image.open(io.BytesIO(base_image)).convert("RGB")
+        base = Image.open(io.BytesIO(base_image)).convert("RGBA")
     else:
-        base = Image.open(base_image).convert("RGB")
+        base = Image.open(base_image).convert("RGBA")
     base = base.resize((CARD_W, CARD_H))
 
-    # Bottom gradient scrim so type stays legible over any visual.
-    scrim = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(scrim)
-    for i in range(360):
-        a = int(200 * (i / 360) ** 1.4)
-        sd.line([(0, CARD_H - 360 + i), (CARD_W, CARD_H - 360 + i)],
-                fill=(8, 10, 16, a))
-    card = Image.alpha_composite(base.convert("RGBA"), scrim)
-
-    # Rounded dark glass container at the bottom with a neon border
-    box_x0 = 48
-    box_y0 = CARD_H - 340
-    box_x1 = CARD_W - 48
-    box_y1 = CARD_H - 48
-    
-    overlay = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    
-    # Draw dark container (94% opaque) with a sleek neon border
-    od.rounded_rectangle(
-        [box_x0, box_y0, box_x1, box_y1],
-        radius=18,
-        fill=(8, 10, 16, 240),
-        outline=(139, 92, 246, 220), # Neon purple
-        width=3
-    )
-    
-    card = Image.alpha_composite(card, overlay)
+    # Fresh dark canvas
+    card = Image.new("RGBA", (CARD_W, CARD_H), (8, 10, 16, 255))
     d = ImageDraw.Draw(card)
 
-    # 1. Headline
+    # 1. Tech grid & corner decorations
+    d.rectangle([12, 12, CARD_W - 12, CARD_H - 12], outline=(30, 41, 59, 150), width=1)
+    
+    # Corner brackets for the entire card
+    bracket_color = (139, 92, 246, 120)  # Neon purple
+    d.line([(12, 32), (12, 12), (32, 12)], fill=bracket_color, width=2)
+    d.line([(CARD_W - 12, 32), (CARD_W - 12, 12), (CARD_W - 32, 12)], fill=bracket_color, width=2)
+    d.line([(12, CARD_H - 32), (12, CARD_H - 12), (32, CARD_H - 12)], fill=bracket_color, width=2)
+    d.line([(CARD_W - 12, CARD_H - 32), (CARD_W - 12, CARD_H - 12), (CARD_W - 32, CARD_H - 12)], fill=bracket_color, width=2)
+
+    # 2. Crop and paste the top section of the base image (guaranteed clean visual)
+    art_x0, art_y0 = 48, 48
+    art_x1, art_y1 = CARD_W - 48, 430
+    cropped = base.crop((art_x0, art_y0, art_x1, art_y1))
+    card.paste(cropped, (art_x0, art_y0), cropped)
+
+    # Draw the frame border
+    d.rectangle([art_x0, art_y0, art_x1, art_y1], outline=(30, 41, 59, 255), width=2)
+
+    # Neon cyan corners around the visual feed frame
+    c_color = (6, 182, 212, 255)  # Cyan
+    d.line([(art_x0 - 4, art_y0 - 4), (art_x0 + 20, art_y0 - 4)], fill=c_color, width=3)
+    d.line([(art_x0 - 4, art_y0 - 4), (art_x0 - 4, art_y0 + 20)], fill=c_color, width=3)
+    d.line([(art_x1 + 4, art_y0 - 4), (art_x1 - 20, art_y0 - 4)], fill=c_color, width=3)
+    d.line([(art_x1 + 4, art_y0 - 4), (art_x1 + 4, art_y0 + 20)], fill=c_color, width=3)
+    d.line([(art_x0 - 4, art_y1 + 4), (art_x0 + 20, art_y1 + 4)], fill=c_color, width=3)
+    d.line([(art_x0 - 4, art_y1 + 4), (art_x0 - 4, art_y1 - 20)], fill=c_color, width=3)
+    d.line([(art_x1 + 4, art_y1 + 4), (art_x1 - 20, art_y1 + 4)], fill=c_color, width=3)
+    d.line([(art_x1 + 4, art_y1 + 4), (art_x1 + 4, art_y1 - 20)], fill=c_color, width=3)
+
+    # Labels for sci-fi atmosphere
+    d.text((art_x0 + 10, art_y0 - 25), "NEURAL VISUAL FEED // UNTAMPED DATA", font=_font("mono", 11), fill=(6, 182, 212, 180))
+
+    # 3. Information Console (Bottom Section)
     headline_text = _strip_period(headline).upper()
-    font_size = 54
+    font_size = 42
     font = _font("bold", font_size)
     try:
-        while d.textlength(headline_text, font=font) > (box_x1 - box_x0 - 80) and font_size > 36:
+        while d.textlength(headline_text, font=font) > (art_x1 - art_x0 - 40) and font_size > 28:
             font_size -= 2
             font = _font("bold", font_size)
     except (AttributeError, TypeError):
-        if len(headline_text) > 22:
-            font_size = max(36, int(54 * 22 / len(headline_text)))
+        if len(headline_text) > 30:
+            font_size = max(28, int(42 * 30 / len(headline_text)))
             font = _font("bold", font_size)
 
-    text_x = box_x0 + 40
-    d.text((text_x, box_y0 + 32), headline_text, font=font, fill=(255, 255, 255))
+    d.text((art_x0, 465), headline_text, font=font, fill=(255, 255, 255))
 
-    # 2. Subline
-    subline_lines = textwrap.wrap(_strip_period(subline), width=75)
-    if len(subline_lines) > 2:
-        subline_lines = subline_lines[:2]
-        if not subline_lines[1].endswith("…"):
-            subline_lines[1] = subline_lines[1].rstrip() + "…"
+    # Decorative separator line
+    sep_y = 525
+    d.line([(art_x0, sep_y), (art_x1, sep_y)], fill=(139, 92, 246, 100), width=1)
+    d.rectangle([art_x0, sep_y - 2, art_x0 + 6, sep_y + 2], fill=(139, 92, 246, 255))
+    d.rectangle([art_x1 - 6, sep_y - 2, art_x1, sep_y + 2], fill=(139, 92, 246, 255))
 
+    # Two-column layout details
+    content_y = 548
+    
+    # Left Column: wrapped narrative text
+    subline_text = _strip_period(subline)
+    subline_lines = textwrap.wrap(subline_text, width=54)
+    if len(subline_lines) > 3:
+        subline_lines = subline_lines[:3]
+        if not subline_lines[2].endswith("…"):
+            subline_lines[2] = subline_lines[2].rstrip() + "…"
+            
     for n, line in enumerate(subline_lines):
-        d.text((text_x, box_y0 + 104 + n * 40), line,
-               font=_font("regular", 28), fill=(209, 213, 219))
+        d.text((art_x0, content_y + n * 36), line, font=_font("regular", 22), fill=(209, 213, 219))
 
-    # 3. Signatures / Metadata
-    sig_y = box_y1 - 76
-    d.text((text_x, sig_y), f"sig: {signature[:32]}…",
-           font=_font("mono", 20), fill=(103, 232, 249))
+    # Vertical tech separator
+    col2_x = 830
+    d.line([(col2_x, content_y), (col2_x, CARD_H - 60)], fill=(30, 41, 59, 150), width=1)
 
+    # Right Column: metadata stats
+    meta_x = col2_x + 30
+    labels = ["EVENT SIG", "ATTESTATION", "NETWORK", "SECURITY"]
+    
+    sig_str = f"{signature[:16]}...{signature[-8:]}"
     if attestation is not None:
         attest_sig, cluster = attestation
-        attest_y = box_y1 - 44
-        d.text((text_x, attest_y), f"attest ({cluster}): {attest_sig[:32]}…",
-               font=_font("mono", 18), fill=(52, 211, 153))
+        attest_str = f"{attest_sig[:12]}... ({cluster})"
+        attest_color = (52, 211, 153)  # Emerald green
+    else:
+        attest_str = "PENDING REGISTRATION"
+        attest_color = (239, 68, 68)   # Red
+        
+    values = [
+        (sig_str, (103, 232, 249)),    # Cyan
+        (attest_str, attest_color),
+        ("SOLANA MAINNET", (255, 255, 255)),
+        ("SAP VERIFIED", (139, 92, 246)), # Purple
+    ]
+    
+    for i, (label, (val, color)) in enumerate(zip(labels, values)):
+        curr_y = content_y + i * 36
+        d.text((meta_x, curr_y), f"{label:<12}:", font=_font("mono", 18), fill=(156, 163, 175))
+        d.text((meta_x + 140, curr_y), val, font=_font("mono", 18), fill=color)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
