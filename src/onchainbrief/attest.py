@@ -31,12 +31,7 @@ from solders.transaction import Transaction
 MEMO_PROGRAM_ID = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
 
 # Single source of truth for the payload's static fields; mirrors the SAP
-# capability id registered in P4b so an external verifier can match them.
-# Cap_id uses the on-chain SAP `<protocol>:<kebab-name>` convention — the
-# on-chain validator rejects underscore form as `InvalidCapabilityFormat
-# (6026)`. Cutover note: 2 devnet memos sent before 2026-05-21 carry the
-# pre-SAP value "onchain_event_to_brief"; from this commit onward all new
-# memos use the canonical form and match `sap/src/register.ts` 1:1.
+# capability id. Cap_id uses the on-chain SAP `<protocol>:<kebab-name>` convention.
 APP_ID = "onchainbrief"
 CAP_ID = "onchainbrief:event-to-brief"
 PAYLOAD_VERSION = 1

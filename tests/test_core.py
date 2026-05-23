@@ -531,7 +531,8 @@ def test_pipeline_threads_attestation_into_artifacts(tmp_path):
 
     site = build_feed(tmp_path, tmp_path / "site" / "index.html")
     h = site.read_text(encoding="utf-8")
-    assert "attest (devnet): ATTESTSIGzz" in h
+    assert "SAP Attestation (devnet)" in h
+    assert "ATTESTSIG" in h
     assert "?cluster=devnet" in h
 
     # Regression: attestor=None preserves the old shape.

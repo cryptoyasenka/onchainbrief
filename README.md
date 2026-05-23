@@ -25,7 +25,7 @@ serving the resulting briefs: <https://onchainbrief-production.up.railway.app>.
 
 ```
 src/onchainbrief/
-  config.py             env + ACE endpoints (doc-derived from official repos)
+  config.py             env + ACE endpoints
   watcher.py            Solana logsSubscribe watcher (reconnect, redaction)
   filter.py             local-LLM "brief-worthy?" triage (free; heuristic fallback)
   throttle.py           per-day spend gate (gitignored state)

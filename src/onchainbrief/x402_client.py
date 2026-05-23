@@ -1,19 +1,6 @@
 """x402 on-chain payment client for Ace Data Cloud.
 
-Settles on Base mainnet in USDC; ACE's facilitator covers gas (wallet only
-needs a few USDC). Empirical finding (2026-05-21, see .planning/X402-EVIDENCE):
-
-  * `authorization: Bearer ...` on the service endpoint → credit-billed (the
-    response carries `X-Usage-Exempt: true`, no on-chain settlement)
-  * NO `authorization` header → HTTP 402 with the full x402 challenge body
-    (`accepts[]` per network). Sign EIP-3009 TransferWithAuthorization for
-    the base/exact entry, retry with `X-PAYMENT: <base64(JSON)>` → HTTP 200
-    with the service result, and the facilitator's `transferWithAuthorization`
-    tx lands on Base shortly after.
-
-We sign manually with `eth_account` because the x402 Python libs (Coinbase
-0.3.x, foundation 2.x) both fail Pydantic validation on ACE's challenge
-(multi-network `accepts[]` includes networks the libs' enums don't allow).
+Settles on Base mainnet in USDC using EIP-3009 TransferWithAuthorization.
 """
 
 from __future__ import annotations
@@ -32,8 +19,6 @@ from .config import (
     ACE_API_BASE,
     ACE_ENDPOINTS,
     ACE_IMAGE_TASKS_PATH,
-    ACE_ORDER_PAY_PATH,
-    ACE_PLATFORM_BASE,
     X402_NETWORK,
     Settings,
 )
@@ -129,18 +114,7 @@ class X402Client:
     def pay_address(self) -> str:
         return self._account.address
 
-    @staticmethod
-    def decode_payment_response(resp) -> dict | None:
-        """X-PAYMENT-RESPONSE is OPTIONAL per spec; ACE doesn't return it.
-        Canonical proof is the on-chain USDC Transfer log (see X402-EVIDENCE).
-        """
-        raw = resp.headers.get("X-PAYMENT-RESPONSE")
-        if not raw:
-            return None
-        try:
-            return json.loads(base64.b64decode(raw))
-        except Exception:
-            return {"raw": raw[:200]}
+
 
     def _post_x402(self, url: str, payload: dict[str, Any], *, timeout: float) -> requests.Response:
         for attempt in range(1, 3):
@@ -189,8 +163,4 @@ class X402Client:
             timeout=self.timeout,
         )
 
-    # --- Flow B (explicit order pay) — kept for pre-created console orders ---
 
-    def pay_order(self, order_id: str) -> requests.Response:
-        url = f"{ACE_PLATFORM_BASE}{ACE_ORDER_PAY_PATH.format(order_id=order_id)}"
-        return self._post_x402(url, {"pay_way": "X402"}, timeout=self.timeout)

@@ -1,18 +1,7 @@
 """Entrypoint: watcher -> local filter -> daily throttle -> brief pipeline.
 
-The paid ACE pipeline (SERP -> chat -> image, settled via x402) is
-injected so this orchestration is testable without funds.
-
-Pipeline selection (safe by default):
-  * ACE_X402_PRIVATE_KEY set  -> X402Client transport  (every ACE
-                                  call settled on-chain — Bearer would
-                                  disable 402, so x402 mode must NOT
-                                  send ACE_API_TOKEN)
-  * only ACE_API_TOKEN set    -> AceClient transport    (credit dev mode)
-  * neither                   -> log-only, NO spend (default)
-
-Each produced brief is written to BRIEFS_DIR and the static feed
-(SITE_HTML) is rebuilt so the public site stays current.
+Main runner for OnchainBrief. Orchestrates Solana log monitoring, event
+filtering, brief generation pipeline, and static site rebuilding.
 """
 
 from __future__ import annotations
@@ -134,7 +123,7 @@ def build_watcher(pipeline=None, *, once: bool = False) -> SolanaLogWatcher:
         pipeline = real or _log_only_pipeline
     else:
         spends = True  # an explicitly injected pipeline is assumed to spend
-    ws_url = os.getenv("SOLANA_WS_URL", "wss://api.mainnet-beta.solana.com")
+    ws_url = os.getenv("SOLANA_WS_URL", "wss://us-1-mainnet.oobeprotocol.ai/ws")
     program_ids = [
         p.strip()
         for p in os.getenv("WATCH_PROGRAM_IDS", "").split(",")

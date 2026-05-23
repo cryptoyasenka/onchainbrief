@@ -1,27 +1,7 @@
-"""AceBriefClient — the real BriefClient over ACE's 3 distinct services.
+"""AceBriefClient — the BriefClient adapter over ACE's services.
 
-This is the glue between the raw transports (AceClient = credit/Bearer, or
-X402Client = on-chain x402 settlement) and the pipeline's
-`BriefClient` protocol (serp -> SerpResult, chat -> str, image -> bytes).
-
-Response parsing is **doc-derived**, not assumed: shapes come from the
-official AceDataCloud repos —
-
-  * serp  : SerpAPI docs/google_serp_api_integration_guide.md
-            -> POST /serp/google {"query":...} -> {"organic":[{title,link,snippet}]}
-  * chat  : OpenAIAPI README
-            -> POST /openai/chat/completions -> choices[0].message.content
-  * image : NanoBanana (Gemini wrapper) — same shape as the older FluxAPI
-            from which this contract was originally doc-derived.
-            -> POST /nano-banana/images {"action":"generate",...}
-            -> {"success":true,"task_id":...,"data":[{"image_url":...}]}
-            (blocks until ready with no callback_url; else poll /nano-banana/tasks)
-
-Parsing is deliberately *defensive* (tries the documented key, then known
-aliases) and every extractor is marked so the exact live wrapper is
-re-confirmed empirically at the first funded call without a code
-change. Errors that arrive HTTP-200 as {"error":{...}} or success=false are
-raised, not silently turned into empty briefs.
+Translates the generic pipeline interface (serp, chat, image) into concrete calls
+settled via Bearer token credits or on-chain x402 payments.
 """
 
 from __future__ import annotations

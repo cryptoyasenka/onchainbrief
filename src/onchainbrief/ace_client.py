@@ -1,15 +1,7 @@
 """Standard credit-billed Ace Data Cloud client.
 
-Plain Bearer-token calls that consume account credits. Used to develop and
-empirically measure per-service cost on the free credit grant before the
-x402 on-chain path (x402_client) is funded.
-
-Request/response shapes are doc-derived (official AceDataCloud SerpAPI /
-OpenAIAPI / NanoBanana repos; the NanoBanana image contract mirrors the
-older FluxAPI shape this was originally researched against), not assumed —
-see config.ACE_ENDPOINTS. Both this client and X402Client expose the same
-`call(service, payload) -> requests.Response` surface so AceBriefClient can
-use either transport.
+Handles Bearer-token calls that consume account credits for development
+and testing.
 """
 
 from __future__ import annotations

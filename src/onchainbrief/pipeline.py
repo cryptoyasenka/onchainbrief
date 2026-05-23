@@ -1,15 +1,7 @@
 """Brief pipeline: one notable event -> 3 distinct ACE services -> artifact.
 
-Orchestration only. The ACE call/parse details live behind a small
-`BriefClient` protocol so this is fully testable with a mock (no funds, no
-token). The real adapter (`AceBriefClient`) wraps AceClient/X402Client; its
-response parsing is marked to confirm at the first FUNDED call rather than
-hardcoding an assumed response shape.
-
-The three ACE services (each x402-settled in production):
-  1. serp(query)   -> context snippets + source urls
-  2. chat(prompt)  -> narrative text
-  3. image(prompt) -> base visual bytes
+Coordinates querying SERP, generating brief narratives via chat LLM, and 
+composing the final visual trading card image.
 """
 
 from __future__ import annotations
