@@ -110,8 +110,9 @@ def run_brief(
                 pass
 
     image_bytes = client.image(
-        f"cyberpunk high-tech network schematic for: {headline}; "
-        "glowing data nodes, futuristic digital interface, dark background, premium cyberpunk 3D render, no text"
+        f"Abstract modern 3D geometric concept for: {headline}. "
+        "Matte clay shapes, frosted glass blocks, neutral sophisticated colors of charcoal, silver, and muted bronze. "
+        "Soft clean studio lighting, high depth-of-field background blur, modern tech branding design, no text"
     )
 
     stem = ev.signature[:16]
