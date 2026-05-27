@@ -594,7 +594,7 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         f"<main class=grid>{body}</main>"
         "</div>"
         "<footer>"
-        "<p>Powered by ACE Services & Solana. Attested via Agent PDA. <a href='https://github.com/cryptoyasenka/oobe-ace-bounty' target=_blank rel='noopener noreferrer'>View Source</a></p>"
+        "<p>Powered by ACE Services & Solana. Attested via Agent PDA. <a href='https://github.com/cryptoyasenka/onchainbrief' target=_blank rel='noopener noreferrer'>View Source</a></p>"
         "</footer>"
         
         # Verify modal HTML
