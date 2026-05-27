@@ -3,12 +3,12 @@
 # Build renders the static feed (cold-start safe: emits a valid page even
 # with zero briefs). Start re-renders then serves over the platform $PORT.
 #
-# Briefs live on a persistent volume, not in git. The build step runs before
-# any volume is mounted, so it can only bake an empty page; the start step
-# re-renders from the mounted volume (point BRIEFS_DIR + SITE_HTML + SITE_DIR
-# at the mount, e.g. /data/briefs and /data/site) so the live feed reflects
-# whatever briefs the volume holds — including any added by paid on-demand
-# requests between deploys.
+# The curated launch feed (briefs/ + site/) is committed, so the build bakes
+# a real page and a fresh deploy serves the feed immediately. A persistent
+# volume is optional — only for runtime-added on-demand briefs or horizontal
+# scale: point BRIEFS_DIR + SITE_HTML + SITE_DIR at the mount (e.g.
+# /data/briefs and /data/site) and the start step re-renders from whatever
+# briefs the volume holds, including any added by paid on-demand requests.
 
 [build]
 builder = "nixpacks"
