@@ -19,6 +19,32 @@ class SerpResult:
     sources: list[str]
 
 
+# Image themes are keyed by feed category, never by the headline text. Feeding
+# the literal headline into the image prompt made the model bake the event's
+# words into the artwork (e.g. a garbled "SWAPPED VIA JUPITER" rendered into
+# the 3D scene), which then collided with the type compose.py lays on top. A
+# fixed, text-free theme per category keeps the base art clean — compose.py is
+# the single place that draws real type.
+_IMAGE_THEMES = {
+    "Volume": "flowing liquid-metal currents merging through frosted glass channels",
+    "Deployment": "a single new matte clay monolith rising among smaller blocks",
+    "Governance": "balanced geometric scales formed from frosted glass blocks",
+    "Security": "interlocking brushed-metal shield plates over a dark vault",
+    "Activity": "a cluster of suspended matte clay and frosted glass shapes",
+}
+
+
+def _image_prompt(category: str) -> str:
+    theme = _IMAGE_THEMES.get(category, _IMAGE_THEMES["Activity"])
+    return (
+        f"Abstract modern 3D geometric scene: {theme}. "
+        "Matte clay shapes, frosted glass blocks, neutral sophisticated colors "
+        "of charcoal, silver, and muted bronze. Soft clean studio lighting, "
+        "high depth-of-field background blur, modern tech branding design. "
+        "No text, no letters, no numbers, no words anywhere in the image."
+    )
+
+
 class BriefClient(Protocol):
     def serp(self, query: str) -> SerpResult: ...
     def chat(self, prompt: str) -> str: ...
@@ -215,11 +241,7 @@ def run_brief(
     category = categorize_event(ev)
 
     if not skip_image:
-        image_bytes = client.image(
-            f"Abstract modern 3D geometric concept for: {headline}. "
-            "Matte clay shapes, frosted glass blocks, neutral sophisticated colors of charcoal, silver, and muted bronze. "
-            "Soft clean studio lighting, high depth-of-field background blur, modern tech branding design, no text"
-        )
+        image_bytes = client.image(_image_prompt(category))
         stem = ev.signature[:16]
         card_path = out_dir / f"{stem}.png"
         card = compose_card(

@@ -169,11 +169,9 @@ def test_feed_visual_cards_are_quieted_without_mutating_artifacts():
 
     assert _display_headline(item.headline) == "0.1159 USDS swapped via Jupiter"
     assert "<h2>0.1159 USDS swapped via Jupiter</h2>" in h
-    # Preview shows only the clean top band of the card art (the baked-in
-    # scrim + headline live in the lower 58%), so it stays readable without a
-    # heavy CSS fade ghosting the typography underneath.
-    assert "aspect-ratio:3" in h
-    assert "object-position:center" in h
+    # The full card art is shown un-cropped (its own ratio is 1.75) with no
+    # heavy CSS fade layered on top — the card already carries its own scrim.
+    assert "aspect-ratio:1.75" in h
     assert ".img-wrapper::after" not in h
 
 
