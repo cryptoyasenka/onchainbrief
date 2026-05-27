@@ -43,7 +43,14 @@ _log = logging.getLogger(__name__)
 class Attestation:
     tx_sig: str
     cluster: str
-    payload_sha256: str  # sha256 of the canonical memo payload bytes
+    # sha256 of the canonical memo *payload* bytes (the {v,app,cap,trigger,
+    # sha256,ts} JSON that was sent to the Memo program).
+    memo_payload_sha256: str
+    # sha256 of the *artifacts* (card png + brief md, concatenated in order).
+    # This is the value carried in the memo payload's own "sha256" field and is
+    # what a verifier reproduces from the published files. Distinct from the
+    # payload hash above so the sidecar names both without ambiguity.
+    artifact_sha256: str = ""
 
 
 def _artifact_sha256(paths: Iterable[str | Path]) -> str:
@@ -128,7 +135,12 @@ class Attestor:
             except Exception as e:  # noqa: BLE001
                 _log.warning("attest confirm timed out for %s: %r", sig, e)
             payload_sha = hashlib.sha256(payload).hexdigest()
-            return Attestation(tx_sig=sig, cluster=self.cluster, payload_sha256=payload_sha)
+            return Attestation(
+                tx_sig=sig,
+                cluster=self.cluster,
+                memo_payload_sha256=payload_sha,
+                artifact_sha256=artifact_sha,
+            )
         except Exception as e:  # noqa: BLE001 - resilience boundary
             _log.warning("attest failed for trigger %s: %r", trigger_sig, e)
             return None

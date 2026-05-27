@@ -15,7 +15,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import DEVNET_RPC_URL, MAINNET_RPC_URL
+from .config import (
+    DEVNET_RPC_URL,
+    MAINNET_RPC_URL,
+    PAYMENT_CLUSTER,
+    PAYMENT_RPC_URL,
+    REQUEST_BRIEF_LAMPORTS,
+    lamports_to_sol_str,
+)
 
 _CARD_RE = re.compile(r"!\[card\]\((.+?)\)")
 _SIG_RE = re.compile(r"Solana tx `([^`]+)`")
@@ -155,16 +162,18 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
 
     body = "\n".join(cards) if cards else '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px 0;">No briefs yet</div>'
     request_section = ""
+    pay_sol = lamports_to_sol_str(REQUEST_BRIEF_LAMPORTS)
+    pay_cluster_label = "Devnet" if PAYMENT_CLUSTER == "devnet" else "Mainnet"
     if agent_payment_wallet:
         request_section = (
             "<section class='request-brief-section'>"
             "<div class='request-card'>"
             "<h3>Request an On-Demand Brief</h3>"
-            "<p>Submit a Solana transaction signature. The payment transaction includes a Memo binding it to that request, and the server rejects reused payments.</p>"
+            f"<p>Submit a Solana transaction signature. The payment ({pay_sol} {pay_cluster_label} SOL) carries a Memo binding it to that request, and the server rejects reused payments.</p>"
             "<div class='request-form'>"
             "<input type='text' id='tx-sig-input' placeholder='Enter Solana Transaction Signature' />"
             "<button id='connect-wallet-btn' data-action='connect-wallet'>Connect Phantom</button>"
-            "<button id='submit-request-btn' data-action='submit-request' disabled>Request Brief (0.001 SOL)</button>"
+            f"<button id='submit-request-btn' data-action='submit-request' disabled>Request Brief ({pay_sol} {pay_cluster_label} SOL)</button>"
             "</div>"
             "<div id='wallet-status' class='wallet-status-idle'>Wallet not connected</div>"
             "<div id='request-status-msg' style='margin-top: 12px; font-size: 12px; font-family: monospace;'></div>"
@@ -176,7 +185,9 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
         "<title>OnchainBrief — Verified Solana Intelligence</title>"
-        "<script src='https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js'></script>"
+        "<script src='https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js' "
+        "integrity='sha384-I45YF+S0YGWIolUyTksLk9TNtTqaDgZg8e6T1OoBoJvvFmphqYNIPZw3Kl0TkZNN' "
+        "crossorigin='anonymous'></script>"
         "<style>"
         "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');"
         ":root{"
@@ -887,7 +898,7 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         
         "async function sendPaymentTx(senderPublicKeyStr, amountSol) {"
         "  if (!window.solanaWeb3) throw new Error('Solana Web3 library not loaded. Check connection.');"
-        f"  const rpcUrl = '{DEVNET_RPC_URL}';"
+        f"  const rpcUrl = '{PAYMENT_RPC_URL}';"
         "  const connection = new solanaWeb3.Connection(rpcUrl, 'confirmed');"
         "  const sender = new solanaWeb3.PublicKey(senderPublicKeyStr);"
         "  const recipient = new solanaWeb3.PublicKey(AGENT_PAYMENT_WALLET);"
@@ -931,8 +942,8 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "      statusMsg.style.color = 'red';"
         "      return;"
         "    }"
-        "    statusMsg.textContent = 'Prompting payment transfer of 0.001 SOL in Phantom...';"
-        "    const payment = await sendPaymentTx(userWallet, 0.001);"
+        f"    statusMsg.textContent = 'Prompting payment transfer of {pay_sol} {pay_cluster_label} SOL in Phantom...';"
+        f"    const payment = await sendPaymentTx(userWallet, {pay_sol});"
         "    statusMsg.textContent = 'Payment transaction confirmed. Submitting to agent...';"
         "    const response = await fetch('/api/request-brief', {"
         "      method: 'POST',"

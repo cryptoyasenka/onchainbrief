@@ -24,7 +24,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import onchainbrief.run as run  # noqa: E402
-from onchainbrief.config import DEVNET_RPC_URL, MAINNET_RPC_URL  # noqa: E402
+from onchainbrief.config import (  # noqa: E402
+    DEVNET_RPC_URL,
+    MAINNET_RPC_URL,
+    PAYMENT_CLUSTER,
+    PAYMENT_RPC_URL,
+    REQUEST_BRIEF_LAMPORTS,
+    TARGET_TX_RPC_URL,
+)
 from onchainbrief.watcher import LogEvent  # noqa: E402
 
 
@@ -41,7 +48,12 @@ def build_csp() -> str:
     the feed verifier uses (DEVNET_RPC_URL/MAINNET_RPC_URL), so a Verify-On-Chain
     fetch is never blocked by a host the page is allowed to call."""
     rpc_origins = sorted({
-        o for o in (_rpc_origin(DEVNET_RPC_URL), _rpc_origin(MAINNET_RPC_URL)) if o
+        o for o in (
+            _rpc_origin(DEVNET_RPC_URL),
+            _rpc_origin(MAINNET_RPC_URL),
+            _rpc_origin(PAYMENT_RPC_URL),
+            _rpc_origin(TARGET_TX_RPC_URL),
+        ) if o
     })
     connect_src = " ".join(["'self'", *rpc_origins])
     return (
@@ -58,7 +70,7 @@ SITE_DIR = pathlib.Path(os.getenv("SITE_DIR", "./site")).resolve()
 PORT = int(os.getenv("PORT", "8000"))
 HOST = os.getenv("HOST", "0.0.0.0")  # Railway requires external bind
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "4096"))
-PAYMENT_LAMPORTS = int(os.getenv("REQUEST_BRIEF_LAMPORTS", "1000000"))
+PAYMENT_LAMPORTS = REQUEST_BRIEF_LAMPORTS  # single source of truth (config.py)
 PAYMENT_MAX_AGE_S = int(os.getenv("PAYMENT_MAX_AGE_S", "1800"))
 ONDEMAND_QUEUE_MAX = int(os.getenv("ONDEMAND_QUEUE_MAX", "10"))
 ONDEMAND_WORKERS = int(os.getenv("ONDEMAND_WORKERS", "1"))
@@ -101,14 +113,14 @@ def resolve_payment_wallet() -> str:
 # Resolve Agent Payment Wallet Address. Empty means paid requests are disabled.
 agent_payment_wallet = resolve_payment_wallet()
 
-# Determine RPC URL
-cluster = os.getenv("ATTEST_CLUSTER", "devnet")
-rpc_url = os.getenv(
-    "ATTEST_RPC_URL",
-    "https://api.devnet.solana.com"
-    if cluster == "devnet"
-    else "https://api.mainnet-beta.solana.com"
-)
+# On-demand flow RPC endpoints (config.py). The payment and the analyzed
+# transaction live on different clusters, so they use different RPCs:
+#   - PAYMENT_RPC_URL    : verify the user's SOL payment (same cluster the
+#     frontend signs on, default devnet).
+#   - TARGET_TX_RPC_URL  : fetch the transaction being analyzed (default
+#     mainnet, matching the autonomous watcher).
+payment_rpc_url = PAYMENT_RPC_URL
+target_rpc_url = TARGET_TX_RPC_URL
 
 
 def broadcast_sse(msg: str):
@@ -286,7 +298,7 @@ def _run_demand_job(job: dict[str, str]) -> None:
                 {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
             ]
         }
-        tr = requests.post(rpc_url, json=target_payload, timeout=15)
+        tr = requests.post(target_rpc_url, json=target_payload, timeout=15)
         tr.raise_for_status()
         t_res = tr.json().get("result")
         if not t_res:
@@ -379,7 +391,7 @@ def verify_and_trigger_brief(
                 {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
             ]
         }
-        r = requests.post(rpc_url, json=payload, timeout=15)
+        r = requests.post(payment_rpc_url, json=payload, timeout=15)
         r.raise_for_status()
         res = r.json().get("result")
 
@@ -633,7 +645,8 @@ def main() -> int:
     with ThreadingServer((HOST, PORT), handler) as httpd:
         print(f"OnchainBrief feed on http://{HOST}:{PORT} (dir={SITE_DIR})")
         print(f"[SERVER] Payment recipient wallet: {agent_payment_wallet or 'disabled'}")
-        print(f"[SERVER] Payment cluster verification: {cluster} ({rpc_url})")
+        print(f"[SERVER] Payment verification: {PAYMENT_CLUSTER} ({payment_rpc_url})")
+        print(f"[SERVER] Analyzed-tx fetch RPC: {target_rpc_url}")
         with contextlib.suppress(KeyboardInterrupt):
             httpd.serve_forever()
     return 0

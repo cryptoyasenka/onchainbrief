@@ -1,5 +1,6 @@
 {
   "tx_sig": "53BGewDaTHM3qxcj3zwfoVURRw3BNn2mM1kNwfqJrEoU7ydsPqTdGZHJBwdQ1DcU192efpzA5Ep88QBca1HtQohz",
   "cluster": "mainnet-beta",
-  "payload_sha256": "23693a2101e5fdb06e2c8e458a49c793ddc7b08b33c1dd86359ba3fadc99d0ba"
+  "memo_payload_sha256": "23693a2101e5fdb06e2c8e458a49c793ddc7b08b33c1dd86359ba3fadc99d0ba",
+  "artifact_sha256": "b105015cb206b7e072ad40993e9a58d295d6494c8612fd1aff84e9333620d2f6"
 }

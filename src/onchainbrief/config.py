@@ -54,6 +54,37 @@ X402_EXPECTED_VERIFYING_CONTRACT = os.getenv("X402_EXPECTED_VERIFYING_CONTRACT",
 DEVNET_RPC_URL = os.getenv("DEVNET_RPC_URL", "https://api.devnet.solana.com")
 MAINNET_RPC_URL = os.getenv("MAINNET_RPC_URL", "https://solana-rpc.publicnode.com")
 
+# On-demand "Request a Brief" paid flow. The user's SOL payment and the
+# transaction being analyzed live on *different* clusters, so they need
+# separate RPC endpoints — conflating them is the cluster-mismatch bug where a
+# devnet payment is checked against mainnet (or vice versa) and never found:
+#   - PAYMENT_RPC_URL  : where the demo SOL payment lands AND where the server
+#     verifies it. Defaults to devnet so the demo costs free test SOL.
+#   - TARGET_TX_RPC_URL: where the analyzed transaction (a real on-chain event)
+#     is fetched. Defaults to mainnet, matching the autonomous watcher.
+# The frontend payment JS, the server-side payment check, and the CSP
+# connect-src all read PAYMENT_RPC_URL, so the payment cluster can never drift
+# between what the page signs and what the server validates.
+# REQUEST_BRIEF_LAMPORTS is the single source of truth for the price: the
+# rendered button label, the JS payment amount, and the server-side minimum all
+# derive from it, so they cannot disagree.
+REQUEST_BRIEF_LAMPORTS = int(os.getenv("REQUEST_BRIEF_LAMPORTS", "1000000"))
+PAYMENT_CLUSTER = os.getenv("PAYMENT_CLUSTER", "devnet")
+PAYMENT_RPC_URL = os.getenv(
+    "PAYMENT_RPC_URL",
+    DEVNET_RPC_URL if PAYMENT_CLUSTER == "devnet" else MAINNET_RPC_URL,
+)
+TARGET_TX_RPC_URL = os.getenv("TARGET_TX_RPC_URL", MAINNET_RPC_URL)
+
+
+def lamports_to_sol_str(lamports: int) -> str:
+    """Human SOL string for a lamport amount, trailing zeros trimmed.
+
+    1_000_000 -> "0.001". Used for UI labels and the JS transfer amount so both
+    render from the same REQUEST_BRIEF_LAMPORTS source.
+    """
+    return f"{lamports / 1_000_000_000:.9f}".rstrip("0").rstrip(".")
+
 
 @dataclass(frozen=True)
 class Settings:

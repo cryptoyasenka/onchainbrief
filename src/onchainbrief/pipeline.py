@@ -249,7 +249,8 @@ def run_brief(
                     {
                         "tx_sig": attestation.tx_sig,
                         "cluster": attestation.cluster,
-                        "payload_sha256": attestation.payload_sha256,
+                        "memo_payload_sha256": attestation.memo_payload_sha256,
+                        "artifact_sha256": attestation.artifact_sha256,
                     },
                     indent=2,
                 ),

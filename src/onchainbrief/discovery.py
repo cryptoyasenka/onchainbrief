@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 from urllib.parse import urlparse
 
 import requests
@@ -19,6 +20,19 @@ from .watcher import redact
 
 # Synapse Agent Protocol program ID on Solana (both devnet and mainnet-beta)
 SAP_PROGRAM_ID = Pubkey.from_string("SAPpUhsWLJG1FfkGRcXagEDMrMsWGjbky7AyhGpFETZ")
+
+# Discovery trust controls. The registry is permissionless — anyone can
+# register an agent under a capability id — so resolving "the first agent" is
+# only as trustworthy as the registry. These optional pins constrain what a
+# discovered endpoint is allowed to be before we route paid x402 calls to it:
+#   - SAP_EXPECTED_AGENT_PDA : require this exact agent PDA among the registered
+#     providers (else reject and fall back to the static ACE base).
+#   - SAP_ALLOWED_API_BASES  : comma-separated allowlist of acceptable inferred
+#     base URLs (else reject). Empty = no host restriction.
+SAP_EXPECTED_AGENT_PDA = os.getenv("SAP_EXPECTED_AGENT_PDA", "").strip()
+SAP_ALLOWED_API_BASES = [
+    b.strip() for b in os.getenv("SAP_ALLOWED_API_BASES", "").split(",") if b.strip()
+]
 
 _log = logging.getLogger(__name__)
 
@@ -165,7 +179,20 @@ def discover_endpoint(rpc_url: str, capability_id: str) -> str | None:
         print(f"[SAP DISCOVERY] No agents registered for capability '{capability_id}'")
         return None
 
-    selected_agent = agents[0]
+    if SAP_EXPECTED_AGENT_PDA:
+        if SAP_EXPECTED_AGENT_PDA not in agents:
+            print(
+                f"[SAP DISCOVERY] expected agent {SAP_EXPECTED_AGENT_PDA} not among "
+                f"{len(agents)} registered provider(s); rejecting discovery"
+            )
+            return None
+        selected_agent = SAP_EXPECTED_AGENT_PDA
+    else:
+        selected_agent = agents[0]
+        print(
+            "[SAP DISCOVERY] WARNING: no SAP_EXPECTED_AGENT_PDA pin set — trusting "
+            "the first registered agent from a permissionless registry"
+        )
     print(f"[SAP DISCOVERY] Found agent '{selected_agent}' for capability")
     x402_endpoint = get_agent_x402_endpoint(rpc_url, selected_agent)
     if not x402_endpoint:
@@ -183,6 +210,12 @@ def discover_endpoint(rpc_url: str, capability_id: str) -> str | None:
             base_domain = netloc
         api_base = f"{parsed.scheme}://{base_domain}"
         print(f"[SAP DISCOVERY] Inferred API base URL: {api_base}")
+        if SAP_ALLOWED_API_BASES and api_base not in SAP_ALLOWED_API_BASES:
+            print(
+                f"[SAP DISCOVERY] inferred base {api_base} not in "
+                f"SAP_ALLOWED_API_BASES allowlist; rejecting"
+            )
+            return None
         return api_base
     except Exception as e:
         print(f"[SAP DISCOVERY] Failed to parse endpoint domain: {e!r}")

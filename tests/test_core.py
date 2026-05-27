@@ -570,7 +570,8 @@ def test_pipeline_attests_pristine_bytes_via_sidecar(tmp_path):
             return Attestation(
                 tx_sig="ATTESTSIG" + "z" * 60,
                 cluster="devnet",
-                payload_sha256="deadbeef",
+                memo_payload_sha256="deadbeef",
+                artifact_sha256=self.hashed_sha,
             )
 
     ev = LogEvent("5xSIGabcdefghijklmnop1234567890", ["l"] * 8, ["ProgZ"])
@@ -593,6 +594,10 @@ def test_pipeline_attests_pristine_bytes_via_sidecar(tmp_path):
     data = json_module.loads(sidecar.read_text(encoding="utf-8"))
     assert data["tx_sig"].startswith("ATTESTSIG")
     assert data["cluster"] == "devnet"
+    # Sidecar names both hashes unambiguously, and artifact_sha256 reproduces
+    # the published bytes (card+brief) — what an on-chain verifier recomputes.
+    assert data["memo_payload_sha256"] == "deadbeef"
+    assert data["artifact_sha256"] == _sha([art.card_path, art.brief_path])
 
     # Feed reads the sidecar → still renders the verify button + sig.
     site = build_feed(tmp_path, tmp_path / "site" / "index.html")
@@ -1518,7 +1523,8 @@ def test_serve_feed_endpoints(tmp_path, monkeypatch):
         
     import serve_feed
     monkeypatch.setattr(serve_feed, "agent_payment_wallet", recipient)
-    monkeypatch.setattr(serve_feed, "rpc_url", "https://api.devnet.solana.com")
+    monkeypatch.setattr(serve_feed, "payment_rpc_url", "https://api.devnet.solana.com")
+    monkeypatch.setattr(serve_feed, "target_rpc_url", "https://api.devnet.solana.com")
     monkeypatch.setattr(serve_feed, "PAYMENTS_LEDGER_PATH", tmp_path / "payments.json")
     
     from serve_feed import verify_and_trigger_brief
@@ -1633,7 +1639,8 @@ def test_queue_full_releases_payment_for_retry(tmp_path, monkeypatch):
 
     import serve_feed
     monkeypatch.setattr(serve_feed, "agent_payment_wallet", recipient)
-    monkeypatch.setattr(serve_feed, "rpc_url", "https://api.devnet.solana.com")
+    monkeypatch.setattr(serve_feed, "payment_rpc_url", "https://api.devnet.solana.com")
+    monkeypatch.setattr(serve_feed, "target_rpc_url", "https://api.devnet.solana.com")
     monkeypatch.setattr(serve_feed, "PAYMENTS_LEDGER_PATH", tmp_path / "payments.json")
     # Reports not-full at the early fast-path check, but raises on put_nowait —
     # forces the reserve→Full→release path (the actual fix), not the early
@@ -1697,6 +1704,31 @@ def test_queue_full_releases_payment_for_retry(tmp_path, monkeypatch):
     ) if (tmp_path / "payments.json").exists() else {"payments": {}, "nonces": {}}
     assert payment_sig not in ledger.get("payments", {})
     assert "nonce-1" not in ledger.get("nonces", {})
+
+
+def test_request_amount_consistent_across_ui_and_server():
+    """The on-demand price has one source (REQUEST_BRIEF_LAMPORTS). Regression
+    guard against the rendered button / JS amount drifting from the lamports the
+    server actually requires — a mismatch silently rejects every paid request."""
+    import importlib
+    from pathlib import Path
+
+    from onchainbrief import feed
+    from onchainbrief.config import REQUEST_BRIEF_LAMPORTS, lamports_to_sol_str
+
+    sol = lamports_to_sol_str(REQUEST_BRIEF_LAMPORTS)
+    html = feed._render([], agent_payment_wallet="A" * 43)
+    # Button label and the JS transfer both render the same SOL figure.
+    assert f"Request Brief ({sol} " in html
+    assert f"sendPaymentTx(userWallet, {sol})" in html
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root / "scripts") not in sys.path:
+        sys.path.insert(0, str(root / "scripts"))
+    serve_feed = importlib.import_module("serve_feed")
+    # Server's required lamports == the single config source the UI rendered.
+    assert serve_feed.PAYMENT_LAMPORTS == REQUEST_BRIEF_LAMPORTS
+    assert abs(float(sol) * 1_000_000_000 - REQUEST_BRIEF_LAMPORTS) < 1
 
 
 def test_token_amount_falls_back_to_string_and_raw():

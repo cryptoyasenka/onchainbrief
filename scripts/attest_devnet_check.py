@@ -99,7 +99,8 @@ def main() -> int:
         return 1
 
     print(f"[OK] tx_sig={result.tx_sig}")
-    print(f"[OK] payload_sha256={result.payload_sha256}")
+    print(f"[OK] memo_payload_sha256={result.memo_payload_sha256}")
+    print(f"[OK] artifact_sha256={result.artifact_sha256}")
     print(f"[OK] explorer: {explorer_url(result.tx_sig, result.cluster)}")
     return 0
 
