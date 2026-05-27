@@ -153,6 +153,27 @@ def test_feed_empty_dir_is_valid(tmp_path):
     assert "No briefs yet" in h and h.rstrip().endswith("</html>")
 
 
+def test_feed_visual_cards_are_quieted_without_mutating_artifacts():
+    from onchainbrief.feed import _display_headline, _render, FeedItem
+
+    item = FeedItem(
+        headline="0.1159 USDS SWAPPED VIA JUPITER",
+        card="ABCsig.png",
+        narrative="A swap routed through Jupiter.",
+        signature="ABCsig111",
+        sources=[],
+        category="Volume",
+        md_name="ABCsig.md",
+    )
+    h = _render([item])
+
+    assert _display_headline(item.headline) == "0.1159 USDS swapped via Jupiter"
+    assert "<h2>0.1159 USDS swapped via Jupiter</h2>" in h
+    assert ".img-wrapper::after" in h
+    assert "height:72%" in h
+    assert "rgba(7,11,22,0.98) 36%" in h
+
+
 def test_feed_has_no_inline_event_handlers():
     """Frontend hardening (T8): every interactive element wires behaviour
     through a single delegated listener via data-action, not inline onclick/
@@ -1816,4 +1837,3 @@ def test_feed_rpc_hosts_are_covered_by_csp():
         p = urlsplit(url)
         origin = f"{p.scheme}://{p.netloc}"
         assert origin in connect_src, f"{origin} missing from CSP connect-src"
-

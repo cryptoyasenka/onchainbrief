@@ -29,6 +29,22 @@ _SIG_RE = re.compile(r"Solana tx `([^`]+)`")
 _ATTEST_RE = re.compile(r"Attestation tx `([^`]+)` \(([^)]+)\)")
 _SRC_RE = re.compile(r"^- (\S+)", re.MULTILINE)
 _CAT_RE = re.compile(r"Category: (\S+)")
+_HEADLINE_ACRONYMS = {
+    "ACE",
+    "BPF",
+    "CSP",
+    "DEX",
+    "RPC",
+    "SAP",
+    "SOL",
+    "USDC",
+    "USDS",
+}
+_HEADLINE_TITLE_WORDS = {
+    "JUPITER": "Jupiter",
+    "PHANTOM": "Phantom",
+    "SOLANA": "Solana",
+}
 
 
 @dataclass
@@ -42,6 +58,26 @@ class FeedItem:
     attest_sig: str = ""
     attest_cluster: str = ""
     md_name: str = ""
+
+
+def _display_headline(headline: str) -> str:
+    """Keep attested markdown intact while making feed headlines less shouty."""
+    words = []
+    for idx, raw in enumerate(headline.split()):
+        leading = raw[: len(raw) - len(raw.lstrip("([{"))]
+        trailing = raw[len(raw.rstrip(".,:;!?)]}…")) :]
+        core = raw[len(leading) : len(raw) - len(trailing) if trailing else len(raw)]
+        if core in _HEADLINE_TITLE_WORDS:
+            words.append(f"{leading}{_HEADLINE_TITLE_WORDS[core]}{trailing}")
+            continue
+        if not core or core in _HEADLINE_ACRONYMS or not core.isupper():
+            words.append(raw)
+            continue
+        lowered = core.lower()
+        if idx == 0:
+            lowered = lowered.capitalize()
+        words.append(f"{leading}{lowered}{trailing}")
+    return " ".join(words)
 
 
 def _parse_brief(md_path: Path) -> FeedItem | None:
@@ -146,7 +182,7 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         cards.append(
             f'<article data-category="{cat.lower()}">'
             f'{img_html}'
-            f'<h2>{html.escape(it.headline)}</h2>'
+            f'<h2>{html.escape(_display_headline(it.headline))}</h2>'
             f'<p class="narrative">{html.escape(it.narrative)}</p>'
             f'{sources_html}'
             f'<div class="proofs">'
@@ -304,12 +340,26 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "aspect-ratio:1.75;"
         "background:#1f2937;"
         "margin-bottom:20px;"
-        "border:1px solid rgba(255,255,255,0.05)"
+        "border:1px solid rgba(255,255,255,0.05);"
+        "position:relative;"
+        "isolation:isolate"
+        "}"
+        ".img-wrapper::after{"
+        "content:'';"
+        "position:absolute;"
+        "left:0;"
+        "right:0;"
+        "bottom:0;"
+        "height:72%;"
+        "background:linear-gradient(to bottom,rgba(7,11,22,0),rgba(7,11,22,0.74) 12%,rgba(7,11,22,0.98) 36%,#070b16 100%);"
+        "pointer-events:none;"
+        "z-index:1"
         "}"
         "article img{"
         "width:100%;"
         "height:100%;"
         "object-fit:cover;"
+        "object-position:center 42%;"
         "transition:transform 0.5s ease"
         "}"
         "article:hover img{"
