@@ -113,6 +113,19 @@ def _metric_line(facts) -> str:
     return line
 
 
+def _headline_already_carries_metric(headline: str, metric: str) -> bool:
+    """Avoid printing the same amount twice on generated visual cards."""
+    if not headline or not metric:
+        return False
+    head = headline.lower().replace(",", "")
+    metric_head = metric.split("  ", 1)[0].lower().replace(",", "")
+    parts = metric_head.split()
+    if len(parts) < 2:
+        return False
+    amount, asset = parts[0], parts[1]
+    return amount in head and asset in head
+
+
 def compose_card(
     base_image: bytes | str | Path,
     headline: str,
@@ -144,18 +157,18 @@ def compose_card(
         a = int(225 * (y - scrim_top) / (CARD_H - scrim_top))
         od.line([(0, y), (CARD_W, y)], fill=(5, 8, 18, a))
 
-    # Category badge, top-left.
+    # Category badge, top-left. Keep it quiet: the feed already exposes filters.
     if category:
         col = _CAT_COLORS.get(category, _CAT_COLORS["Activity"])
-        bf = _font("bold", 26)
+        bf = _font("bold", 22)
         label = category.upper()
         tw = od.textlength(label, font=bf)
         od.rounded_rectangle(
-            [pad, pad, pad + tw + 36, pad + 46], radius=12,
-            fill=(col[0], col[1], col[2], 38),
-            outline=(col[0], col[1], col[2], 200), width=2,
+            [pad, pad, pad + tw + 30, pad + 38], radius=10,
+            fill=(col[0], col[1], col[2], 28),
+            outline=(col[0], col[1], col[2], 150), width=2,
         )
-        od.text((pad + 18, pad + 9), label, font=bf, fill=col)
+        od.text((pad + 15, pad + 8), label, font=bf, fill=col)
 
     # Headline (auto-scaled, single line, ellipsised if it still overflows).
     head = _strip_period(headline).upper()
@@ -168,15 +181,12 @@ def compose_card(
             head = disp
             break
     metric = _metric_line(facts)
+    if _headline_already_carries_metric(head, metric):
+        metric = ""
     mf = _fit_font(od, metric, "bold", max_w, start=64, min_size=34) if metric else None
 
-    # Stack from the bottom up: sig → meta → metric → headline.
+    # Stack from the bottom up: meta -> optional metric -> headline.
     y = CARD_H - pad
-
-    sig_short = f"{signature[:8]}…{signature[-8:]}" if len(signature) > 18 else signature
-    sf = _font("mono", 24)
-    y -= 30
-    od.text((pad, y), f"◎ {sig_short}", font=sf, fill=(148, 163, 184, 255))
 
     # Meta line: program + UTC time (from facts.block_time).
     meta_bits = []
@@ -190,9 +200,9 @@ def compose_card(
             .strftime("%Y-%m-%d %H:%M UTC")
         )
     if meta_bits:
-        rf = _font("regular", 26)
-        y -= 40
-        od.text((pad, y), "  ·  ".join(meta_bits), font=rf, fill=(203, 213, 225, 255))
+        rf = _font("regular", 24)
+        y -= 34
+        od.text((pad, y), "  ·  ".join(meta_bits), font=rf, fill=(186, 196, 210, 230))
 
     if mf is not None:
         y -= int(mf.size * 1.25)
@@ -257,4 +267,3 @@ def write_brief_markdown(
         encoding="utf-8",
     )
     return out_path
-

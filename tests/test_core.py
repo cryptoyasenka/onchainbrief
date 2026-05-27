@@ -81,6 +81,19 @@ def test_compose_card_and_brief(tmp_path):
     assert "solscan.io/tx/5xSIG" in text
 
 
+def test_card_metric_is_not_duplicated_when_headline_has_it():
+    from onchainbrief.compose import _headline_already_carries_metric
+
+    assert _headline_already_carries_metric(
+        "3,610.1197 Tqj8 swapped via Jupiter",
+        "3,610.1197 Tqj8",
+    )
+    assert not _headline_already_carries_metric(
+        "Large swap routed via Jupiter",
+        "3,610.1197 Tqj8",
+    )
+
+
 def test_pipeline_calls_three_services_and_writes_artifacts(tmp_path):
     from onchainbrief.pipeline import SerpResult, run_brief
 
@@ -1803,5 +1816,4 @@ def test_feed_rpc_hosts_are_covered_by_csp():
         p = urlsplit(url)
         origin = f"{p.scheme}://{p.netloc}"
         assert origin in connect_src, f"{origin} missing from CSP connect-src"
-
 

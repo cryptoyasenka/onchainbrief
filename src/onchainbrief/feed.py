@@ -142,14 +142,10 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
             )
 
         cat = html.escape(it.category)
-        cat_badge_html = f'<span class="category-badge {cat.lower()}">{cat}</span>'
 
         cards.append(
             f'<article data-category="{cat.lower()}">'
             f'{img_html}'
-            f'<div class="card-meta">'
-            f'{cat_badge_html}'
-            f'</div>'
             f'<h2>{html.escape(it.headline)}</h2>'
             f'<p class="narrative">{html.escape(it.narrative)}</p>'
             f'{sources_html}'
@@ -180,6 +176,26 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
             "</div>"
             "</section>"
         )
+
+    # Only render category pills that actually have briefs — otherwise an empty
+    # tab (e.g. Security with zero briefs) shows a blank void. "All" is always
+    # present. The page is re-rendered at boot, so pills always match the cards.
+    present_cats = {it.category.lower() for it in items}
+    _cat_pills = [
+        ("security", "Security"),
+        ("deployment", "Deployments"),
+        ("volume", "Volume"),
+        ("governance", "Governance"),
+        ("activity", "Activity"),
+    ]
+    filter_buttons = (
+        "<button class='filter-btn active' data-action='filter' data-category='all'>All</button>"
+    )
+    for _slug, _label in _cat_pills:
+        if _slug in present_cats:
+            filter_buttons += (
+                f"<button class='filter-btn' data-action='filter' data-category='{_slug}'>{_label}</button>"
+            )
 
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -483,14 +499,6 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         ".value-card p{font-size:13px;line-height:1.6;color:var(--text-muted);margin:0;font-weight:300}"
         
         "/* New Overhaul CSS styles */"
-        ".card-meta{display:flex;justify-content:flex-start;align-items:center;margin-bottom:12px}"
-        ".category-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:4px 8px;border-radius:6px;border:1px solid}"
-        ".category-badge.security{color:#f87171;border-color:rgba(239,68,68,0.25);background:rgba(239,68,68,0.1)}"
-        ".category-badge.deployment{color:#60a5fa;border-color:rgba(59,130,246,0.25);background:rgba(59,130,246,0.1)}"
-        ".category-badge.volume{color:#34d399;border-color:rgba(16,185,129,0.25);background:rgba(16,185,129,0.1)}"
-        ".category-badge.governance{color:#c084fc;border-color:rgba(139,92,246,0.25);background:rgba(139,92,246,0.1)}"
-        ".category-badge.activity{color:#9ca3af;border-color:rgba(156,163,175,0.25);background:rgba(156,163,175,0.1)}"
-        
         ".filter-bar{display:flex;justify-content:center;gap:10px;margin-bottom:40px;flex-wrap:wrap}"
         ".filter-btn{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);color:var(--text-muted);padding:8px 16px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s cubic-bezier(0.4,0,0.2,1);text-transform:uppercase;letter-spacing:0.04em}"
         ".filter-btn:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.15);color:#ffffff}"
@@ -594,12 +602,7 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         
         # Filter tabs
         "<div class='filter-bar'>"
-        "<button class='filter-btn active' data-action='filter' data-category='all'>All</button>"
-        "<button class='filter-btn' data-action='filter' data-category='security'>Security</button>"
-        "<button class='filter-btn' data-action='filter' data-category='deployment'>Deployments</button>"
-        "<button class='filter-btn' data-action='filter' data-category='volume'>Volume</button>"
-        "<button class='filter-btn' data-action='filter' data-category='governance'>Governance</button>"
-        "<button class='filter-btn' data-action='filter' data-category='activity'>Activity</button>"
+        f"{filter_buttons}"
         "</div>"
         
         f"<main class=grid>{body}</main>"
