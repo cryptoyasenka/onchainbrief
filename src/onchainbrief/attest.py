@@ -1,13 +1,13 @@
-"""Per-brief on-chain attestation — Memo-program tx that binds the artifact
+"""Per-brief on-chain attestation - Memo-program tx that binds the artifact
 hash to its trigger event.
 
 The wash-resistance proof: every published brief leaves an on-chain receipt
-whose payload is `{v, app, cap, trigger, sha256, ts}` — anyone can fetch the
+whose payload is `{v, app, cap, trigger, sha256, ts}` - anyone can fetch the
 artifacts, hash them, and verify the memo. Trigger sig binds the brief to a
 real on-chain event; the artifact sha binds the receipt to its content.
 
 Resilience contract (same as pipeline.handle): attest failure must NOT block
-publishing — it returns `None` and the brief ships without a second anchor.
+publishing - it returns `None` and the brief ships without a second anchor.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
-# SPL Memo v2 — the canonical memo program on every Solana cluster.
+# SPL Memo v2 - the canonical memo program on every Solana cluster.
 MEMO_PROGRAM_ID = Pubkey.from_string("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
 
 # Single source of truth for the payload's static fields; mirrors the SAP
@@ -47,7 +47,7 @@ class Attestation:
 
 
 def _artifact_sha256(paths: Iterable[str | Path]) -> str:
-    """Concat-hash artifact bytes in the given order — deterministic."""
+    """Concat-hash artifact bytes in the given order - deterministic."""
     h = hashlib.sha256()
     for p in paths:
         h.update(Path(p).read_bytes())
@@ -129,7 +129,7 @@ class Attestor:
                 _log.warning("attest confirm timed out for %s: %r", sig, e)
             payload_sha = hashlib.sha256(payload).hexdigest()
             return Attestation(tx_sig=sig, cluster=self.cluster, payload_sha256=payload_sha)
-        except Exception as e:  # noqa: BLE001 — resilience boundary
+        except Exception as e:  # noqa: BLE001 - resilience boundary
             _log.warning("attest failed for trigger %s: %r", trigger_sig, e)
             return None
 

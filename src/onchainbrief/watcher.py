@@ -26,7 +26,7 @@ _SECRET_IN_URL = re.compile(r"(api[-_]?key=)[^&]+|/v2/[^/]+", re.IGNORECASE)
 
 
 def redact(url: str) -> str:
-    """Helius/QuickNode put the key in the URL — never log it raw."""
+    """Helius/QuickNode put the key in the URL; never log it raw."""
     return _SECRET_IN_URL.sub(lambda m: (m.group(1) or "") + "***", url)
 
 
@@ -40,6 +40,10 @@ class LogEvent:
     logs: list[str]
     program_ids: list[str]
     slot: int | None = None
+    # Decoded event facts (amount/asset/from→to/program), attached by
+    # txfacts.enrich_event after a getTransaction round-trip. None until the
+    # signature is enriched; the pipeline falls back to log-only behaviour.
+    facts: "object | None" = None
 
 
 EventHandler = Callable[[LogEvent], Awaitable[None]]
@@ -133,7 +137,7 @@ class SolanaLogWatcher:
                             msg = json.loads(raw)
                         except (asyncio.TimeoutError, ValueError, TypeError) as e:
                             raise websockets.WebSocketException(f"Subscription handshake failed/timeout: {e}")
-                        
+
                         msg_id = msg.get("id")
                         if msg_id in pending_ids:
                             pending_ids.remove(msg_id)
@@ -156,7 +160,7 @@ class SolanaLogWatcher:
                         if ev is not None:
                             await self.on_event(ev)
                         # The handler may have called stop() (e.g. --once).
-                        # Re-check now instead of blocking on the next frame —
+                        # Re-check now instead of blocking on the next frame,
                         # otherwise --once hangs until another log arrives.
                         if self._stopping:
                             break

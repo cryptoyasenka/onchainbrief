@@ -8,20 +8,21 @@
     "sap": "tsx src/register.ts",
     "sap:plan": "tsx src/register.ts --plan",
     "sap:mainnet": "tsx src/register.ts --mainnet",
-    "diag": "tsx src/diag.ts"
+    "diag": "tsx src/diag.ts",
+    "audit:ci": "npm audit --audit-level=high"
   },
   "dependencies": {
-    "@oobe-protocol-labs/synapse-sap-sdk": "0.4.1",
-    "@solana/web3.js": "^1.95.0",
-    "bn.js": "^5.2.1",
-    "bs58": "^6.0.0",
-    "dotenv": "^16.4.0",
-    "zod": "^4.3.6"
+    "@oobe-protocol-labs/synapse-sap-sdk": "0.13.0",
+    "@solana/web3.js": "1.98.4",
+    "bn.js": "5.2.3",
+    "bs58": "6.0.0",
+    "dotenv": "16.6.1",
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "@types/node": "22.15.32",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=18.0.0"

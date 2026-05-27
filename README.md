@@ -12,14 +12,36 @@ settled on-chain via x402 (USDC on Base):
 2. **Chat** (`/openai/chat/completions`) — write a tight narrative from it.
 3. **Image** (`/nano-banana/images`) — render a "trading card" visual.
 
-A local model decides whether an event is worth a brief at all, so every paid
-ACE call is bound to a real on-chain trigger (max wash-resistance).
+A local triage step decides whether an event is worth a brief at all — a
+local LLM when one is configured, otherwise a deterministic heuristic over
+the decoded instruction type and program id. Either way every paid ACE call
+is bound to a real on-chain trigger (max wash-resistance), never synthetic
+volume.
 
 **Empirical proof of the on-chain payment path.** All three services have
 been settled live on Base mainnet from the dedicated wallet to ACE's
-facilitator: 9 USDC `Transfer` receipts on Base (3 service-types × probe
-burn + 6 from the end-to-end demo). Total burn 0.328491 USDC. Live feed
-serving the resulting briefs: <https://onchainbrief-production.up.railway.app>.
+facilitator `0x4F0E2D34…dadCeE7`. The live feed serves four briefs across the
+deployment and volume categories; each brief's three ACE calls (search / chat
+/ image) are individual USDC `Transfer` receipts on Base — twelve settlements
+behind the published feed — and each brief is independently attested on Solana
+**mainnet** via the Memo program (one tx per brief, linked from its card, and
+reproducible from the published artifacts' SHA-256). Reproduce the Base
+settlements with
+`python scripts/fetch_basescan_tx.py`. Live feed:
+<https://onchainbrief-production.up.railway.app>.
+
+## Try it now (offline, no funds, ~10s)
+
+```
+python scripts/demo.py            # -> ./demo-out/site/index.html
+```
+
+Runs the exact production pipeline against a sample Solana event with a
+deterministic transport that returns ACE's documented response shapes — no
+token, no wallet, no network needed. Open the printed `index.html` to see a
+real generated brief and its trading-card visual. This is the fastest way to
+see what the agent produces; the live on-chain paths (x402 settlement, Memo
+attestation, SAP registration) are each verifiable separately below.
 
 ## Layout
 
@@ -39,7 +61,7 @@ src/onchainbrief/
   run.py                watcher -> filter -> throttle -> pipeline (creds-guarded)
 scripts/
   demo.py                  offline end-to-end proof (no funds/token/network)
-  e2e_demo.py              live driver — produced the 2 real briefs on the feed
+  e2e_demo.py              live driver — produced the feed briefs (x402-settled, mainnet-attested)
   build_site.py            render the static feed (cold-start safe)
   serve_feed.py            stdlib static server (Railway start command)
   measure_credits.py       one real call per service, records actual cost
@@ -100,15 +122,13 @@ source: `SAP_KEYPAIR_PATH` (Solana CLI JSON byte-array) or
 `SAP_PRIVATE_KEY` (base58). Both share the same dedicated address as
 `SOLANA_KEYPAIR_PATH` by design.
 
-## Try it (offline, no funds)
-
-```
-python scripts/demo.py            # -> ./demo-out/site/index.html
-```
-
-Runs the exact production pipeline against a sample Solana event with a
-deterministic transport that returns ACE's documented response shapes. Open
-the printed `index.html` to see a real generated brief.
+**Live on Solana mainnet.** The agent is registered: PDA
+`DsTZa5xY4sF8y3JFdE53B8T9xEsYtvntEUggm6FwMgVi` (tx
+`56XsT7T4xaererxMzJ554L4FGARWaPEysRaV6bT5ikR3xJudEmmqfmsLjxqZUBB3wKxoUH4XsZmpWvccKPhRGoKe`).
+Open `explorer.solana.com/address/DsTZa5xY4sF8y3JFdE53B8T9xEsYtvntEUggm6FwMgVi`
+to read the on-chain profile — six capabilities, both protocols, pricing
+tier, x402 endpoint, active. The script is idempotent: a re-run confirms
+the existing agent rather than double-registering.
 
 ## Run the agent (live)
 
@@ -126,8 +146,39 @@ With no creds the agent runs safe (logs candidates, never spends).
 `railway.toml` builds the static feed and serves it:
 
 - build: `pip install -r requirements.txt && python scripts/build_site.py`
-- start: `python scripts/serve_feed.py` (binds the platform `$PORT`)
+- start: `python scripts/build_site.py && python scripts/serve_feed.py`
+  (re-renders the feed, then binds the platform `$PORT`)
 
 The build is cold-start safe — it deploys a valid page even before the
-first brief. `Procfile` provides the same start command for Procfile-based
-buildpacks.
+first brief. The start step re-renders before serving, so the live feed always
+reflects whatever briefs are present at boot. `Procfile` provides the same
+start command for Procfile-based buildpacks.
+
+### Generated artifacts (`briefs/`, `site/`)
+
+`briefs/` holds the curated launch feed — the `.md` + `.png` + `.attest.json`
+attestation sidecars that the live pipeline / `e2e_demo.py` produced — and
+`site/` is what `build_site.py` renders from them. **Both are committed**, so a
+fresh Railway deploy serves the real feed immediately (the deploy regenerates
+`site/` from `briefs/` on every release). To regenerate locally, run
+`python scripts/demo.py` (offline) or the gated `e2e_demo.py` (paid) and open
+`./site/index.html`.
+
+A published brief is **immutable**: its bytes are hashed into the on-chain
+Memo, so it must never be hand-edited after attestation (that would break the
+verifier). For runtime-added on-demand briefs — or to scale beyond a single
+instance — point `BRIEFS_DIR` + `SITE_DIR` (and `SITE_HTML`) at a Railway
+persistent volume; the runtime rebuild then picks up whatever the volume holds,
+including briefs added by paid on-demand requests between deploys.
+
+### Payment ledger durability
+
+The on-demand paid-brief endpoint records consumed payments in
+`PAYMENTS_LEDGER_PATH` (default `.state/payments.json`). This is a **local
+JSON file**: it survives process restarts but **not** an ephemeral-filesystem
+redeploy, and it is **single-instance only** — running multiple server replicas
+would let a payment be replayed across instances. For the bounty's single
+Railway instance this is sufficient; for horizontal scale, point
+`PAYMENTS_LEDGER_PATH` at a persistent volume or replace `_load_ledger` /
+`_save_ledger` with a shared store (Redis/Postgres). The server logs a warning
+at startup when the ledger lives under `.state`.

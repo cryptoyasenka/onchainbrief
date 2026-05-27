@@ -28,12 +28,16 @@ Thumbs.db
 # local artifacts
 *.log
 .gstack/
+.superstack/
 .state/
 .planning/ACE-MEASUREMENTS.md
 
-# generated runtime artifacts (real ones come from a funded run + deploy)
-# /briefs/
-# /site/
+# Curated launch feed. `briefs/` (the .md + .png + .attest.json a funded e2e
+# run produced) and the rendered `site/` are committed so a fresh Railway
+# deploy serves the feed immediately. The build/start steps regenerate `site/`
+# from `briefs/`. For runtime-added on-demand briefs / horizontal scale, point
+# BRIEFS_DIR + SITE_DIR at a Railway persistent volume (see README). A published
+# brief is immutable — its bytes are hashed into the on-chain Memo.
 /demo-out/
 
 # public-repo scrub build dir

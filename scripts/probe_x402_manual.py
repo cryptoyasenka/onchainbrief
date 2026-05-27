@@ -19,7 +19,6 @@ from __future__ import annotations
 import base64
 import datetime
 import json
-import os
 import pathlib
 import secrets
 import sys
@@ -174,7 +173,6 @@ def main() -> int:
     account = Account.from_key(s.ace_x402_private_key)
     print(f"x402 pay address: {account.address}")
 
-    rows: list[str] = []
     results = []
     for name, payload in PROBES:
         print(f"\n--- {name} ---")
@@ -188,12 +186,12 @@ def main() -> int:
             print(r)
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines = [f"# x402 round-trip evidence (manual EIP-3009 signing)\n",
+    lines = ["# x402 round-trip evidence (manual EIP-3009 signing)\n",
              f"Measured: {stamp}\n",
              f"Pay address: `{account.address}`\n",
-             f"\nFlow: POST service endpoint without Authorization → HTTP 402 with accepts[] → "
-             f"sign EIP-3009 TransferWithAuthorization for USDC on Base → retry with X-PAYMENT base64 "
-             f"header → HTTP 200 + X-PAYMENT-RESPONSE carries the on-chain settlement tx hash.\n\n"]
+             "\nFlow: POST service endpoint without Authorization → HTTP 402 with accepts[] → "
+             "sign EIP-3009 TransferWithAuthorization for USDC on Base → retry with X-PAYMENT base64 "
+             "header → HTTP 200 + X-PAYMENT-RESPONSE carries the on-chain settlement tx hash.\n\n"]
     for r in results:
         s = r["service"]
         if r.get("ok"):

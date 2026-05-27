@@ -87,13 +87,17 @@ class _DemoTransport:
                             "through the Jupiter program."},
             ]})
         if service == "chat":
+            # Returns the documented TITLE:/NARRATIVE: shape the production
+            # prompt demands, so the demo exercises run_brief's real parser
+            # (not the deterministic-fallback headline).
             return _Resp({"choices": [{"message": {"role": "assistant",
                 "content": (
-                    "A multi-hop swap of roughly 1.28M USDC settled through "
-                    "Jupiter in a single transaction. The route touched the "
-                    "SPL token program and completed without error. Activity "
-                    "like this marks meaningful aggregator flow rather than "
-                    "routine noise.")}}]})
+                    "TITLE: 1.28M USDC ROUTED VIA JUPITER\n"
+                    "NARRATIVE: A multi-hop swap of roughly 1.28M USDC settled "
+                    "through Jupiter in a single transaction, touching the SPL "
+                    "token program and completing without error. Aggregator "
+                    "flow of this size signals real routing demand on Solana "
+                    "rather than routine noise.")}}]})
         if service == "image":
             return _Resp({"success": True, "task_id": "demo_tsk",
                           "data": [{"image_url": "https://cdn.demo/i.png"}]})

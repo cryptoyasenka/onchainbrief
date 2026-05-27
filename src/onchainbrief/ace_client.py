@@ -11,8 +11,6 @@ from typing import Any
 import requests
 
 from .config import (
-    ACE_API_BASE,
-    ACE_ENDPOINTS,
     ACE_IMAGE_TASKS_PATH,
     IMAGE_MODEL,
     IMAGE_SIZE,
@@ -38,10 +36,13 @@ class AceClient:
                 "content-type": "application/json",
             }
         )
+        # Dynamic tool discovery via Solana SAP registry
+        from .discovery import discover_ace_endpoints
+        self.api_base, self.endpoints = discover_ace_endpoints(self.settings.solana_rpc_url)
 
     def call(self, service: str, payload: dict[str, Any]) -> requests.Response:
         """Uniform transport surface (mirrors X402Client.call)."""
-        return self._post(ACE_ENDPOINTS[service], payload, service=service)
+        return self._post(self.endpoints[service], payload, service=service)
 
     def _post(
         self,
@@ -50,11 +51,11 @@ class AceClient:
         *,
         service: str | None = None,
     ) -> requests.Response:
-        url = f"{ACE_API_BASE}{path}"
+        url = f"{self.api_base}{path}"
         # Image generation blocks until the image is ready when no
         # callback_url is set; that can exceed the default chat/serp timeout.
-        timeout = max(self.timeout, 300.0) if path == ACE_ENDPOINTS["image"] else self.timeout
-        # Image requires a per-Application credential — the account-wide
+        timeout = max(self.timeout, 300.0) if path == self.endpoints["image"] else self.timeout
+        # Image requires a per-Application credential - the account-wide
         # token returns "No available channel for model … under group
         # default". Image and the image task-polling endpoint both go through
         # the image credential; chat/serp keep using the account-wide token.

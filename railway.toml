@@ -1,12 +1,19 @@
 # Railway deploy config.
 # Nixpacks auto-detects Python from requirements.txt / pyproject.toml.
 # Build renders the static feed (cold-start safe: emits a valid page even
-# with zero briefs). Start serves ./site over the platform-injected $PORT.
+# with zero briefs). Start re-renders then serves over the platform $PORT.
+#
+# Briefs live on a persistent volume, not in git. The build step runs before
+# any volume is mounted, so it can only bake an empty page; the start step
+# re-renders from the mounted volume (point BRIEFS_DIR + SITE_HTML + SITE_DIR
+# at the mount, e.g. /data/briefs and /data/site) so the live feed reflects
+# whatever briefs the volume holds — including any added by paid on-demand
+# requests between deploys.
 
 [build]
 builder = "nixpacks"
 buildCommand = "pip install -r requirements.txt && python scripts/build_site.py"
 
 [deploy]
-startCommand = "python scripts/serve_feed.py"
+startCommand = "python scripts/build_site.py && python scripts/serve_feed.py"
 restartPolicyType = "always"

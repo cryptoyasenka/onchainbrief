@@ -19,7 +19,7 @@ DAILY_CAP = int(os.getenv("DAILY_BRIEF_CAP", "1"))
 
 
 def _today() -> str:
-    # timezone.utc (not datetime.UTC) — UTC alias is 3.11+, but this runs on
+    # timezone.utc (not datetime.UTC) - UTC alias is 3.11+, but this runs on
     # every brief and pyproject floors at 3.10 (Railway nixpacks isn't pinned).
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 

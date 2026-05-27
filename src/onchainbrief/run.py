@@ -1,8 +1,4 @@
-"""Entrypoint: watcher -> local filter -> daily throttle -> brief pipeline.
-
-Main runner for OnchainBrief. Orchestrates Solana log monitoring, event
-filtering, brief generation pipeline, and static site rebuilding.
-"""
+"""Entrypoint: watcher -> local filter -> daily throttle -> brief pipeline."""
 
 from __future__ import annotations
 
@@ -18,6 +14,8 @@ from .watcher import LogEvent, SolanaLogWatcher
 
 BRIEFS_DIR = os.getenv("BRIEFS_DIR", "./briefs")
 SITE_HTML = os.getenv("SITE_HTML", "./site/index.html")
+
+ON_BRIEF_COMPILED_CALLBACK = None
 
 
 def _build_attestor():
@@ -41,14 +39,14 @@ def _build_attestor():
 
     try:
         return Attestor(rpc, kp, cluster=cluster)
-    except Exception as e:  # noqa: BLE001 — keep agent alive on bad keypair
+    except Exception as e:  # noqa: BLE001 - keep agent alive on bad keypair
         print(f"[ATTEST] disabled (keypair load failed): {e!r}")
         return None
 
 
 async def _log_only_pipeline(ev: LogEvent) -> None:
     print(f"[BRIEF-CANDIDATE] sig={ev.signature} programs={ev.program_ids} "
-          f"(no ACE creds — log-only, not spending. Set ACE_API_TOKEN "
+          f"(no ACE creds - log-only, not spending. Set ACE_API_TOKEN "
           f"[+ACE_X402_PRIVATE_KEY for the x402 bar] to go live.)")
 
 
@@ -61,11 +59,11 @@ def _build_transport():
     if os.getenv("ACE_API_TOKEN"):
         from .ace_client import AceClient
 
-        return AceClient(), "credit (Bearer token — dev mode)"
+        return AceClient(), "credit (Bearer token - dev mode)"
     return None, "log-only"
 
 
-def make_real_pipeline():
+def make_real_pipeline(skip_image: bool = False):
     """Build the funded pipeline closure, or None if creds are absent."""
     transport, mode = _build_transport()
     if transport is None:
@@ -77,15 +75,21 @@ def make_real_pipeline():
     attest_mode = (
         f"attest:{attestor.cluster}" if attestor is not None else "attest:off"
     )
-    print(f"[PIPELINE] live: {mode} | {attest_mode} -> {BRIEFS_DIR} -> {SITE_HTML}")
+    print(f"[PIPELINE] live: {mode} | {attest_mode} -> {BRIEFS_DIR} -> {SITE_HTML} (skip_image={skip_image})")
 
     async def _pipeline(ev: LogEvent) -> None:
-        art = await run_brief_async(ev, client, BRIEFS_DIR, attestor=attestor)
+        art = await run_brief_async(ev, client, BRIEFS_DIR, attestor=attestor, skip_image=skip_image)
         await asyncio.to_thread(build_feed, BRIEFS_DIR, SITE_HTML)
         receipt = (
             f" attest={art.attestation.tx_sig[:16]}…" if art.attestation else ""
         )
-        print(f"[BRIEF] {art.headline} -> {art.card_path}{receipt} | feed {SITE_HTML}")
+        card_dest = art.card_path if art.card_path else "no-image"
+        print(f"[BRIEF] {art.headline} -> {card_dest}{receipt} | feed {SITE_HTML}")
+        if ON_BRIEF_COMPILED_CALLBACK is not None:
+            try:
+                ON_BRIEF_COMPILED_CALLBACK(art.signature)
+            except Exception as e:
+                print(f"[CALLBACK-ERROR] {e!r}")
 
     return _pipeline
 
@@ -97,7 +101,20 @@ async def handle(
     worthy = await asyncio.to_thread(is_brief_worthy, ev)
     if not worthy:
         return
-    # The throttle is a *spend* gate; log-only mode never spends, so it must
+    # Decode the transaction into real facts (amount/asset/parties/program)
+    # before spending on the brief - this is what makes the brief say what
+    # happened instead of paraphrasing a SERP of the program id. Best-effort:
+    # a failed RPC round-trip leaves ev.facts None and the pipeline falls back.
+    rpc_url = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+    # getTransaction goes to a decode RPC (OOBE's free tier can't serve it).
+    tx_rpc_url = os.getenv("SOLANA_TX_RPC_URL", "https://solana-rpc.publicnode.com")
+    try:
+        from .txfacts import enrich_event
+
+        await asyncio.to_thread(enrich_event, ev, rpc_url, tx_rpc_url=tx_rpc_url)
+    except Exception as e:  # noqa: BLE001 - enrichment is non-critical
+        print(f"[ENRICH-SKIP] {ev.signature}: {e!r}")
+    # The throttle is a spend gate; log-only mode never spends, so it must
     # not burn the daily budget (else a no-creds dry-run logs one candidate
     # then prints [THROTTLED] forever at the default cap of 1).
     if spends and not throttle.try_consume():
@@ -105,7 +122,7 @@ async def handle(
         return
     try:
         await pipeline(ev)
-    except Exception as e:  # noqa: BLE001 — resilience boundary
+    except Exception as e:  # noqa: BLE001 - resilience boundary
         # One failed ACE call (bad token, API error, CDN/network blip) must
         # NOT kill the long-running watcher. Log and survive. The throttle
         # slot stays consumed: the call may have already cost a credit, and
@@ -116,9 +133,9 @@ async def handle(
             watcher.stop()
 
 
-def build_watcher(pipeline=None, *, once: bool = False) -> SolanaLogWatcher:
+def build_watcher(pipeline=None, *, once: bool = False, skip_image: bool = False) -> SolanaLogWatcher:
     if pipeline is None:
-        real = make_real_pipeline()
+        real = make_real_pipeline(skip_image=skip_image)
         spends = real is not None  # log-only fallback must not gate on spend
         pipeline = real or _log_only_pipeline
     else:
@@ -131,7 +148,7 @@ def build_watcher(pipeline=None, *, once: bool = False) -> SolanaLogWatcher:
     ]
     if not program_ids:
         raise SystemExit(
-            "Set WATCH_PROGRAM_IDS (comma-separated) — the curated programs to "
+            "Set WATCH_PROGRAM_IDS (comma-separated) - the curated programs to "
             "watch. Empty by design: low-spend wants a deliberate scope."
         )
     watcher = SolanaLogWatcher(ws_url, program_ids)
@@ -144,7 +161,8 @@ def build_watcher(pipeline=None, *, once: bool = False) -> SolanaLogWatcher:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     once = "--once" in args
-    asyncio.run(build_watcher(once=once).run())
+    skip_image = "--no-image" in args or "--skip-image" in args or os.getenv("SKIP_IMAGE", "").lower() in ("true", "1", "yes")
+    asyncio.run(build_watcher(once=once, skip_image=skip_image).run())
     return 0
 
 

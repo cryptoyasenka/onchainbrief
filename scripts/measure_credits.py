@@ -10,7 +10,6 @@ Output: prints per-service status + usage; writes a measurements note under
 from __future__ import annotations
 
 import datetime
-import json
 import pathlib
 import sys
 

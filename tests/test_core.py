@@ -140,6 +140,45 @@ def test_feed_empty_dir_is_valid(tmp_path):
     assert "No briefs yet" in h and h.rstrip().endswith("</html>")
 
 
+def test_feed_has_no_inline_event_handlers():
+    """Frontend hardening (T8): every interactive element wires behaviour
+    through a single delegated listener via data-action, not inline onclick/
+    on* attributes. Exercise all branches: verify button (attested item),
+    lightbox image, filter tabs, and the request form (wallet set)."""
+    from onchainbrief.feed import _render, FeedItem
+
+    item = FeedItem(
+        headline="Whale move",
+        card="ABCsig.png",
+        narrative="A large transfer landed.",
+        signature="ABCsig111",
+        sources=["https://src.test/x"],
+        category="Volume",
+        attest_sig="ATTESTsig222",
+        attest_cluster="mainnet-beta",
+        md_name="ABCsig.md",
+    )
+    h = _render([item], agent_payment_wallet="Wa11etPubKey1111111111111111111111111111111")
+
+    # No inline event-handler attributes anywhere in the rendered page.
+    assert "onclick" not in h
+    assert "onerror" not in h
+    assert "onload" not in h
+    assert "javascript:" not in h
+    # Behaviour is wired through the delegated handler + data-action hooks.
+    assert "addEventListener('click'" in h
+    assert "data-action" in h
+    assert 'data-action="verify"' in h and 'data-sig="ABCsig111"' in h
+    assert 'data-action="lightbox"' in h
+    assert "data-action='filter'" in h
+    assert "data-action='connect-wallet'" in h
+    assert "data-action='submit-request'" in h
+    assert "data-action='close-verify'" in h
+    assert "data-action='close-lightbox'" in h
+    # The modal content shields its children so an inside-click cannot close it.
+    assert "data-action='noop'" in h
+
+
 def test_throttle_caps_per_day(tmp_path, monkeypatch):
     monkeypatch.setattr(throttle, "STATE_PATH", tmp_path / "t.json")
     monkeypatch.setattr(throttle, "DAILY_CAP", 2)
@@ -492,8 +531,14 @@ def test_attestor_send_is_mocked_and_failure_returns_none(tmp_path):
     assert a2.attest("TRIGSIG", [art]) is None
 
 
-def test_pipeline_threads_attestation_into_artifacts(tmp_path):
-    """With attestor: card/brief/feed carry the receipt; without: unchanged."""
+def test_pipeline_attests_pristine_bytes_via_sidecar(tmp_path):
+    """T1: the on-chain memo must bind the EXACT public bytes. run_brief hashes
+    card+brief, then writes the receipt to a <stem>.attest.json sidecar WITHOUT
+    re-composing the files — so a verifier re-hashing the published png+md
+    reproduces the memo's sha256. attestor=None leaves the old shape & no
+    sidecar."""
+    import hashlib
+    import json as json_module
     from onchainbrief.attest import Attestation
     from onchainbrief.feed import build_feed
     from onchainbrief.pipeline import SerpResult, run_brief
@@ -508,10 +553,19 @@ def test_pipeline_threads_attestation_into_artifacts(tmp_path):
             Image.new("RGB", (320, 180), (10, 30, 60)).save(buf, "PNG")
             return buf.getvalue()
 
+    def _sha(paths):
+        h = hashlib.sha256()
+        for p in paths:
+            h.update(pathlib.Path(p).read_bytes())
+        return h.hexdigest()
+
     class MockAttestor:
         def __init__(self):
             self.calls = []
+            self.hashed_sha = None
         def attest(self, trigger_sig, paths):
+            # Hash exactly what we were handed — this is what the memo binds.
+            self.hashed_sha = _sha(paths)
             self.calls.append((trigger_sig, [str(p) for p in paths]))
             return Attestation(
                 tx_sig="ATTESTSIG" + "z" * 60,
@@ -525,21 +579,33 @@ def test_pipeline_threads_attestation_into_artifacts(tmp_path):
 
     assert art.attestation is not None
     assert att.calls and att.calls[0][0] == ev.signature  # called once, right sig
-    md = art.brief_path.read_text(encoding="utf-8")
-    assert "Attestation tx `ATTESTSIGzz" in md
-    assert "?cluster=devnet" in md
 
+    # The crux of T1: published files are byte-for-byte what was hashed.
+    assert _sha([art.card_path, art.brief_path]) == att.hashed_sha
+
+    # Pristine: no attestation line baked into the brief.
+    md = art.brief_path.read_text(encoding="utf-8")
+    assert "Attestation tx" not in md
+
+    # Receipt lives in the sidecar instead.
+    sidecar = pathlib.Path(art.brief_path).with_suffix(".attest.json")
+    assert sidecar.exists()
+    data = json_module.loads(sidecar.read_text(encoding="utf-8"))
+    assert data["tx_sig"].startswith("ATTESTSIG")
+    assert data["cluster"] == "devnet"
+
+    # Feed reads the sidecar → still renders the verify button + sig.
     site = build_feed(tmp_path, tmp_path / "site" / "index.html")
     h = site.read_text(encoding="utf-8")
-    assert "SAP Attestation (devnet)" in h
+    assert "Verify On-Chain (devnet)" in h
     assert "ATTESTSIG" in h
-    assert "?cluster=devnet" in h
 
-    # Regression: attestor=None preserves the old shape.
+    # Regression: attestor=None preserves the old shape, no sidecar written.
     art2 = run_brief(ev, MockClient(), tmp_path / "no_attest")
     assert art2.attestation is None
     md2 = art2.brief_path.read_text(encoding="utf-8")
     assert "Attestation tx" not in md2
+    assert not pathlib.Path(art2.brief_path).with_suffix(".attest.json").exists()
 
 
 def test_attestor_returns_none_on_bad_keypair_path(tmp_path):
@@ -609,6 +675,77 @@ def test_x402_sign_x_payment_is_byte_stable(monkeypatch):
     )
     out = x402_client._sign_x_payment(acct, accept)
     assert out == expected
+
+
+def _policy_accept(**overrides):
+    """A 402 accept block that passes the default signing policy; override one
+    field per rejection case."""
+    accept = {
+        "scheme": "exact",
+        "network": "base",
+        "payTo": "0x4F0E2D3477a1B94CF33d16E442CEe4733dadCeE7",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "maxAmountRequired": "95215",
+        "extra": {
+            "name": "USD Coin",
+            "version": "2",
+            "chainId": 8453,
+            "verifyingContract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        },
+    }
+    accept.update(overrides)
+    return accept
+
+
+def test_x402_validate_accept_enforces_spending_policy(monkeypatch):
+    """T3: a signed EIP-3009 authorization is a bearer instrument, so the client
+    must refuse to sign a challenge that breaks the spending policy — oversized
+    amount, wrong chain/asset/network, or a payTo outside an allowlist."""
+    import pytest
+
+    from onchainbrief import x402_client
+
+    # Happy path: a real chat-tier challenge signs without complaint.
+    x402_client._validate_accept(_policy_accept())
+
+    # Oversized amount (2 USDC > 1 USDC default cap).
+    with pytest.raises(x402_client.X402Error, match="exceeds cap"):
+        x402_client._validate_accept(_policy_accept(maxAmountRequired="2000000"))
+
+    # Non-positive / malformed amount.
+    with pytest.raises(x402_client.X402Error):
+        x402_client._validate_accept(_policy_accept(maxAmountRequired="0"))
+
+    # Wrong chain (Ethereum mainnet instead of Base).
+    with pytest.raises(x402_client.X402Error, match="chainId"):
+        x402_client._validate_accept(
+            _policy_accept(extra={"chainId": 1, "name": "x", "version": "2",
+                                  "verifyingContract": "0x0"})
+        )
+
+    # Wrong asset.
+    with pytest.raises(x402_client.X402Error, match="asset"):
+        x402_client._validate_accept(
+            _policy_accept(asset="0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+        )
+
+    # Wrong network / scheme.
+    with pytest.raises(x402_client.X402Error, match="network"):
+        x402_client._validate_accept(_policy_accept(network="solana"))
+    with pytest.raises(x402_client.X402Error, match="scheme"):
+        x402_client._validate_accept(_policy_accept(scheme="upto"))
+
+    # payTo allowlist: when set, only listed recipients pass.
+    monkeypatch.setattr(
+        x402_client, "X402_ALLOWED_PAY_TO",
+        "0x1111111111111111111111111111111111111111",
+    )
+    with pytest.raises(x402_client.X402Error, match="allowlist"):
+        x402_client._validate_accept(_policy_accept())
+    # The default facilitator is rejected; an allowlisted one passes.
+    x402_client._validate_accept(
+        _policy_accept(payTo="0x1111111111111111111111111111111111111111")
+    )
 
 
 def test_ace_brief_client_image_async_poll_transient_failures():
@@ -845,6 +982,7 @@ def test_x402_client_retry(monkeypatch):
         ace_api_token_image="t2",
         ace_x402_private_key="0x" + "aa" * 32,
         solana_rpc_url="",
+        solana_tx_rpc_url="",
         solana_ws_url="",
         solana_keypair_path="",
         attest_cluster="devnet"
@@ -857,4 +995,781 @@ def test_x402_client_retry(monkeypatch):
     res = client.call("chat", {"test": 123})
     assert res.status_code == 200
     assert mock_s.post_calls == 4
+
+
+def test_sap_tool_discovery_success(monkeypatch):
+    from onchainbrief import discovery
+    from solders.pubkey import Pubkey
+    import hashlib
+
+    call_log = []
+    
+    cap_id_bytes = b"onchainbrief:web-context-research"
+    cap_hash = hashlib.sha256(cap_id_bytes).digest()
+    agent_pk = Pubkey.new_unique()
+    
+    cap_data = bytearray()
+    cap_data.extend(bytes.fromhex("80426314855a676f")) # disc
+    cap_data.append(254) # bump
+    cap_data.extend(len(cap_id_bytes).to_bytes(4, "little")) # len
+    cap_data.extend(cap_id_bytes) # string
+    cap_data.extend(cap_hash) # hash
+    cap_data.extend((1).to_bytes(4, "little")) # vec length 1
+    cap_data.extend(bytes(agent_pk)) # agent Pubkey
+    cap_data.append(0) # total pages
+    cap_data.extend((1779320538).to_bytes(8, "little")) # last updated
+    
+    agent_data = bytearray()
+    agent_data.extend(bytes.fromhex("f177458ce9097032")) # disc
+    agent_data.append(253) # bump
+    agent_data.append(1) # version
+    agent_data.extend(bytes(Pubkey.new_unique())) # wallet
+    agent_data.extend((12).to_bytes(4, "little"))
+    agent_data.extend(b"OnchainBrief") # name
+    agent_data.extend((4).to_bytes(4, "little"))
+    agent_data.extend(b"desc") # desc
+    agent_data.append(0) # agent_id option None
+    agent_data.append(0) # agent_uri option None
+    agent_data.append(1) # x402 option Some
+    endpoint_bytes = b"https://facilitator.acedata.cloud/.well-known/x402"
+    agent_data.extend(len(endpoint_bytes).to_bytes(4, "little"))
+    agent_data.extend(endpoint_bytes)
+    agent_data.append(1) # is_active
+
+    def mock_get_account_data(rpc_url, pda):
+        call_log.append(pda)
+        if len(call_log) == 1:
+            return bytes(cap_data)
+        else:
+            return bytes(agent_data)
+
+    monkeypatch.setattr(discovery, "get_account_data", mock_get_account_data)
+
+    base, endpoints = discovery.discover_ace_endpoints("http://mock_rpc")
+    assert base == "https://api.acedata.cloud"
+    assert len(call_log) == 2
+
+
+def test_discovery_banner_redacts_rpc_key(monkeypatch, capsys):
+    """The startup banner must never print a raw api_key (it lands in CI logs)."""
+    from onchainbrief import discovery
+
+    def offline(rpc_url, pda):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(discovery, "get_account_data", offline)
+
+    # Fake token deliberately WITHOUT a live secret-key prefix: tests/ ships in
+    # the public allowlist and scrub_public_repo.py tripwires on that prefix.
+    secret_url = "https://staging.oobeprotocol.ai:8080/rpc?api_key=FAKEKEY_deadbeef0123"
+    discovery.discover_ace_endpoints(secret_url)
+    out = capsys.readouterr().out
+    assert "FAKEKEY_deadbeef0123" not in out
+    assert "api_key=***" in out
+
+
+def test_enrich_event_routes_decode_to_tx_rpc(monkeypatch):
+    """The getTransaction round-trip must go to tx_rpc_url (keyless archival),
+    not the primary rpc_url (OOBE free tier can't serve getTransaction)."""
+    import types
+    from onchainbrief import txfacts
+
+    seen = {}
+
+    def fake_fetch(sig, rpc_url, *, timeout=20.0):
+        seen["sig"] = sig
+        seen["rpc_url"] = rpc_url
+        return None  # miss → leaves facts None, skips the price fetch (no network)
+
+    monkeypatch.setattr(txfacts, "fetch_transaction", fake_fetch)
+
+    ev = types.SimpleNamespace(signature="SIG_ABC", facts=None)
+    txfacts.enrich_event(ev, "https://oobe.example/rpc?api_key=sk", tx_rpc_url="https://decode.example")
+    assert seen["sig"] == "SIG_ABC"
+    assert seen["rpc_url"] == "https://decode.example"
+
+    # Fallback: no tx_rpc_url → the decode uses the primary rpc_url.
+    seen.clear()
+    txfacts.enrich_event(ev, "https://primary.example", tx_rpc_url=None)
+    assert seen["rpc_url"] == "https://primary.example"
+
+
+def test_extract_facts_governance_by_program_id():
+    """A SPL-Governance tx with no token/SOL move and no English log hints is
+    still classified governance (program-id beats the activity fallback)."""
+    from onchainbrief.txfacts import extract_facts
+
+    gov = "GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw"
+    result = {
+        "transaction": {"message": {"accountKeys": [
+            {"pubkey": "Voter1111111111111111111111111111111111111", "signer": True, "writable": True},
+            {"pubkey": gov, "signer": False, "writable": False},
+        ]}},
+        "meta": {
+            "fee": 5000,
+            # payer delta is exactly the fee → net SOL move is zero
+            "preBalances": [1000000, 0], "postBalances": [995000, 0],
+            "preTokenBalances": [], "postTokenBalances": [],
+            # deliberately NO "vote"/"proposal"/etc. words — only program-id can classify
+            "logMessages": [
+                f"Program {gov} invoke [1]",
+                "Program log: Instruction: 5",
+                f"Program {gov} success",
+            ],
+        },
+    }
+    facts = extract_facts(result)
+    assert facts.kind == "governance"
+
+
+def test_extract_facts_security_op_fills_security_category():
+    """An SPL-Token setAuthority tx that moves no value is classified security
+    and routes to the Security feed tab (which the facts-first path otherwise
+    never fills)."""
+    from onchainbrief.txfacts import SPL_TOKEN_PROGRAM, extract_facts
+    from onchainbrief.filter import categorize_event
+    from onchainbrief.watcher import LogEvent
+
+    result = {
+        "transaction": {"message": {
+            "accountKeys": [
+                {"pubkey": "Admin111111111111111111111111111111111111", "signer": True, "writable": True},
+                {"pubkey": SPL_TOKEN_PROGRAM, "signer": False, "writable": False},
+            ],
+            "instructions": [
+                {"programId": SPL_TOKEN_PROGRAM,
+                 "parsed": {"type": "setAuthority", "info": {"authorityType": "mintTokens"}}},
+            ],
+        }},
+        "meta": {
+            "fee": 5000,
+            "preBalances": [1000000, 0], "postBalances": [995000, 0],  # net SOL = fee only
+            "preTokenBalances": [], "postTokenBalances": [],  # no token move
+            "logMessages": ["Program log: Instruction: SetAuthority"],
+        },
+    }
+    facts = extract_facts(result)
+    assert facts.kind == "security"
+    assert "authority" in facts.summary.lower()
+
+    ev = LogEvent("5xSECsetauth1234567890", [], [SPL_TOKEN_PROGRAM], facts=facts)
+    assert categorize_event(ev) == "Security"
+
+
+def test_pipeline_skip_image(tmp_path):
+    from onchainbrief.pipeline import SerpResult, run_brief
+
+    calls = []
+
+    class MockClient:
+        def serp(self, q):
+            calls.append("serp")
+            return SerpResult("ctx summary", ["https://src.test/a"])
+
+        def chat(self, p):
+            calls.append("chat")
+            return "First sentence. Second. Third."
+
+        def image(self, p):
+            calls.append("image")
+            return b""
+
+    ev = LogEvent("5xSIGabcdefghijklmnop1234567890", ["l"] * 8, ["ProgAAA"])
+    art = run_brief(ev, MockClient(), tmp_path, skip_image=True)
+
+    # serp and chat are called, but image is skipped!
+    assert calls == ["serp", "chat"]
+    assert art.card_path is None
+    assert art.brief_path.exists()
+    
+    body = art.brief_path.read_text(encoding="utf-8")
+    assert "![card]" not in body  # no card tag in the markdown file
+    assert "src.test/a" in body
+    assert "solscan.io/tx/5xSIG" in body
+
+
+def test_categorize_event():
+    from onchainbrief.filter import categorize_event
+    from onchainbrief.watcher import LogEvent
+
+    # 1. Security Alert / Admin Action
+    ev_sec = LogEvent("sig_sec", ["Program log: Instruction: SetAuthority", "Program log: set authority"], ["program_sec"])
+    assert categorize_event(ev_sec) == "Security"
+
+    # 2. Deployment
+    ev_dep = LogEvent("sig_dep", ["Program log: Instruction: Initialize", "Program log: upgrade program"], ["BPFLoaderUpgradeab1e11111111111111111111111"])
+    assert categorize_event(ev_dep) == "Deployment"
+
+    # 3. Volume / DeFi
+    ev_vol = LogEvent("sig_vol", ["Program log: Instruction: Swap", "Program log: heavy flow"], ["jup6l81tlcpaaygrnwexj3xxlwbmh4nd54xctxsqsbf"])
+    assert categorize_event(ev_vol) == "Volume"
+
+    # 4. Governance
+    ev_gov = LogEvent("sig_gov", ["Program log: Instruction: Vote", "Program log: proposal council"], ["program_gov"])
+    assert categorize_event(ev_gov) == "Governance"
+
+    # 5. Activity (default)
+    ev_act = LogEvent("sig_act", ["Program log: Instruction: Transfer", "Routine log message"], ["program_other"])
+    assert categorize_event(ev_act) == "Activity"
+
+
+def test_txfacts_sol_transfer():
+    from onchainbrief.txfacts import extract_facts
+
+    result = {
+        "blockTime": 1716000000,
+        "meta": {
+            "err": None, "fee": 5000,
+            "preBalances": [10_000_000_000, 1_000_000_000, 0],
+            "postBalances": [4_999_995_000, 6_000_000_000, 0],
+            "logMessages": [
+                "Program 11111111111111111111111111111111 invoke [1]",
+                "Program log: Instruction: Transfer",
+            ],
+        },
+        "transaction": {"message": {"accountKeys": [
+            {"pubkey": "SenderWalletAddr1111111111111111111111111"},
+            {"pubkey": "RecvWalletAddr22222222222222222222222222"},
+            {"pubkey": "11111111111111111111111111111111"},
+        ]}},
+    }
+    f = extract_facts(result, sol_price_usd=150.0)
+    assert f.kind == "whale_transfer"
+    assert f.asset == "SOL"
+    assert abs(f.amount_native - 5.0) < 0.01      # 5 SOL net moved
+    assert abs(f.amount_usd - 750.0) < 1.0        # 5 * 150
+    assert f.from_addr.startswith("SenderWallet")
+    assert f.to_addr.startswith("RecvWallet")
+    assert "SOL" in f.summary and "→" in f.summary
+
+
+def test_txfacts_usdc_transfer():
+    from onchainbrief.txfacts import extract_facts
+
+    usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    result = {
+        "meta": {
+            "err": None, "fee": 5000,
+            "preBalances": [1_000_000, 2_000_000],
+            "postBalances": [995_000, 2_000_000],
+            "preTokenBalances": [
+                {"owner": "Whale1", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": 1_500_000.0}},
+                {"owner": "Dest1", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": 0.0}},
+            ],
+            "postTokenBalances": [
+                {"owner": "Whale1", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": 0.0}},
+                {"owner": "Dest1", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": 1_500_000.0}},
+            ],
+            "logMessages": ["Program log: Instruction: TransferChecked"],
+        },
+        "transaction": {"message": {"accountKeys": ["Whale1", "Dest1"]}},
+    }
+    f = extract_facts(result)
+    assert f.kind == "token_transfer"
+    assert f.asset == "USDC"
+    assert abs(f.amount_native - 1_500_000.0) < 1
+    assert abs(f.amount_usd - 1_500_000.0) < 1      # stablecoin: usd == amount
+    assert f.from_addr == "Whale1" and f.to_addr == "Dest1"
+    assert "1.50M USDC" in f.summary
+
+
+def test_txfacts_deploy_and_swap_and_empty():
+    from onchainbrief.txfacts import extract_facts
+
+    deploy = {
+        "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1],
+                 "logMessages": [
+                     "Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]"]},
+        "transaction": {"message": {"accountKeys": ["acc"]}},
+    }
+    assert extract_facts(deploy).kind == "deploy"
+
+    jup = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    swap = {
+        "meta": {
+            "err": None, "fee": 5000, "preBalances": [1, 1], "postBalances": [1, 1],
+            "preTokenBalances": [{"owner": "T", "mint": usdc,
+                                  "uiTokenAmount": {"uiAmount": 0.0}}],
+            "postTokenBalances": [{"owner": "T", "mint": usdc,
+                                   "uiTokenAmount": {"uiAmount": 50000.0}}],
+            "logMessages": [f"Program {jup} invoke [1]",
+                            "Program log: Instruction: Route"],
+        },
+        "transaction": {"message": {"accountKeys": ["T", "x"]}},
+    }
+    fs = extract_facts(swap)
+    assert fs.kind == "swap"
+    assert fs.program_name == "Jupiter Aggregator"
+    assert "via Jupiter Aggregator" in fs.summary
+
+    # malformed / empty input must not raise
+    assert extract_facts(None).kind == "activity"
+    assert extract_facts({}).kind == "activity"
+
+
+def test_deploy_via_cpi_names_upgraded_program_not_executor():
+    """F2: a Squads VaultTransactionExecute that CPIs the loader to upgrade
+    another program must be classified by the loader log - 'upgraded', naming
+    the upgraded program - not as the executor 'deploying' itself."""
+    from onchainbrief.txfacts import extract_facts
+
+    squads = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"
+    loader = "BPFLoaderUpgradeab1e11111111111111111111111"
+    target = "B1REA6TxnuQTcXVK94cEZgEv3e9nq8f6VMEjjryyLBHT"
+    result = {
+        "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1],
+                 "logMessages": [
+                     f"Program {squads} invoke [1]",
+                     "Program log: Instruction: VaultTransactionExecute",
+                     f"Program {loader} invoke [2]",
+                     f"Upgraded program {target}",
+                     f"Program {loader} success",
+                     f"Program {squads} success"]},
+        "transaction": {"message": {"accountKeys": ["acc"],
+                                    "instructions": [{"programId": squads}]}},
+    }
+    f = extract_facts(result)
+    assert f.kind == "deploy"
+    assert f.deploy_verb == "upgraded"
+    assert f.program_id == target  # the upgraded program, not the Squads executor
+    assert target in f.summary and "upgraded" in f.summary
+
+    # The loader appearing only as an inner CPI without a deploy/upgrade log is
+    # NOT a deploy (it is incidental to whatever the top-level program did).
+    incidental = {
+        "meta": {"err": None, "fee": 5000, "preBalances": [1], "postBalances": [1],
+                 "logMessages": [
+                     f"Program {squads} invoke [1]",
+                     f"Program {loader} invoke [2]",
+                     f"Program {loader} success",
+                     f"Program {squads} success"]},
+        "transaction": {"message": {"accountKeys": ["acc"],
+                                    "instructions": [{"programId": squads}]}},
+    }
+    assert extract_facts(incidental).kind != "deploy"
+
+
+def test_txfacts_infra_program_never_headline():
+    """ComputeBudget/System are invoked by ~every tx — they must never become
+    the headline entity, else every brief reads 'via Compute Budget'."""
+    from onchainbrief.txfacts import extract_facts
+
+    cb = "ComputeBudget111111111111111111111111111111"
+    jup = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    tok = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+    # ComputeBudget invoked first, Jupiter second → Jupiter is the entity.
+    swap = {
+        "meta": {
+            "err": None, "fee": 5000, "preBalances": [1, 1], "postBalances": [1, 1],
+            "preTokenBalances": [{"owner": "T", "mint": usdc,
+                                  "uiTokenAmount": {"uiAmount": 0.0}}],
+            "postTokenBalances": [{"owner": "T", "mint": usdc,
+                                   "uiTokenAmount": {"uiAmount": 50000.0}}],
+            "logMessages": [f"Program {cb} invoke [1]",
+                            f"Program {jup} invoke [1]"],
+        },
+        "transaction": {"message": {"accountKeys": ["T", "x"]}},
+    }
+    assert extract_facts(swap).program_name == "Jupiter Aggregator"
+
+    # Only infra programs present → no fabricated entity, no 'via ...' tail.
+    plain = {
+        "meta": {
+            "err": None, "fee": 5000, "preBalances": [1], "postBalances": [1],
+            "preTokenBalances": [{"owner": "A", "mint": usdc,
+                                  "uiTokenAmount": {"uiAmount": 0.0}}],
+            "postTokenBalances": [{"owner": "A", "mint": usdc,
+                                   "uiTokenAmount": {"uiAmount": 1000.0}}],
+            "logMessages": [f"Program {cb} invoke [1]", f"Program {tok} invoke [1]"],
+        },
+        "transaction": {"message": {"accountKeys": ["A"]}},
+    }
+    f = extract_facts(plain)
+    assert f.program_name == ""
+    assert "via" not in f.summary
+
+
+def test_governance_brief_names_protocol_not_computebudget():
+    """Regression: a real SPL-Governance tx is [ComputeBudget, GovER…]; without
+    Governance in KNOWN_PROGRAMS, program_name stayed empty and _facts_block fell
+    back to programs[0]=ComputeBudget, so the LLM wrote 'GOVERNANCE EVENT IN
+    COMPUTE BUDGET'. The headline entity must be SPL Governance, with the action
+    captured, and ComputeBudget must never reach the facts handed to the LLM."""
+    from onchainbrief.txfacts import extract_facts
+    from onchainbrief.pipeline import _facts_block, _query_for
+    from onchainbrief.watcher import LogEvent
+
+    cb = "ComputeBudget111111111111111111111111111111"
+    gov = "GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw"
+    result = {
+        "transaction": {"message": {"accountKeys": [
+            {"pubkey": "Signer11111111111111111111111111111111111", "signer": True, "writable": True},
+            {"pubkey": gov, "signer": False, "writable": False},
+        ]}},
+        "meta": {
+            "fee": 5000,
+            "preBalances": [1000000, 0], "postBalances": [995000, 0],  # net SOL = fee only
+            "preTokenBalances": [], "postTokenBalances": [],
+            "logMessages": [
+                f"Program {cb} invoke [1]",
+                f"Program {cb} success",
+                f"Program {gov} invoke [1]",
+                "Program log: GOVERNANCE-INSTRUCTION: SignOffProposal",
+                f"Program {gov} success",
+            ],
+        },
+    }
+    f = extract_facts(result)
+    assert f.kind == "governance"
+    assert f.program_name == "SPL Governance"
+    assert f.program_id == gov
+    assert f.instruction == "SignOffProposal"
+    assert "SPL Governance" in f.summary and "SignOffProposal" in f.summary
+    assert "Compute Budget" not in f.summary and cb not in f.summary
+
+    ev = LogEvent("5xGOVsignoff1234567890", [], [gov], facts=f)
+    block = _facts_block(ev)
+    assert "SPL Governance" in block
+    assert "ComputeBudget" not in block and cb not in block
+    assert "SPL Governance" in _query_for(ev)
+
+
+def test_facts_block_never_emits_infra_program():
+    """Defense-in-depth: even when no program is recognised, _facts_block must
+    not surface an infra program id - it omits the Program line instead."""
+    from onchainbrief.txfacts import extract_facts
+    from onchainbrief.pipeline import _facts_block
+    from onchainbrief.watcher import LogEvent
+
+    cb = "ComputeBudget111111111111111111111111111111"
+    sysprog = "11111111111111111111111111111111"
+    usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    # Pure infra tx that still moved a stablecoin (token_transfer) but exposes no
+    # real protocol — program_name and program_id are both empty.
+    result = {
+        "meta": {
+            "err": None, "fee": 5000, "preBalances": [1], "postBalances": [1],
+            "preTokenBalances": [{"owner": "A", "mint": usdc, "uiTokenAmount": {"uiAmount": 0.0}}],
+            "postTokenBalances": [{"owner": "A", "mint": usdc, "uiTokenAmount": {"uiAmount": 1000.0}}],
+            "logMessages": [f"Program {cb} invoke [1]", f"Program {sysprog} invoke [1]"],
+        },
+        "transaction": {"message": {"accountKeys": ["A"]}},
+    }
+    f = extract_facts(result)
+    assert f.program_name == "" and f.program_id == ""
+    block = _facts_block(LogEvent("5xINFRAonly1234567890", [], [cb], facts=f))
+    assert "ComputeBudget" not in block and "- Program:" not in block
+
+
+def test_no_facts_fallback_skips_infra_program():
+    """Regression for the offline-demo leak: when a tx is NOT decoded (facts is
+    None) the deterministic fallbacks must not name an infra program. The watcher
+    emits program_ids alphabetically sorted, so System '111…'/ComputeBudget sort
+    to [0] — the fallback must pick the first NON-infra id (here Jupiter)."""
+    from onchainbrief.pipeline import _headline_for, _facts_block, _query_for
+    from onchainbrief.watcher import LogEvent
+
+    cb = "ComputeBudget111111111111111111111111111111"
+    sysprog = "11111111111111111111111111111111"
+    jup = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    # As the watcher delivers it: sorted(set(...)) → System, ComputeBudget, Jupiter
+    program_ids = sorted({cb, sysprog, jup})
+    assert program_ids[0] == sysprog  # the trap: infra sorts first
+
+    ev = LogEvent("5xNODECODE1234567890", [], program_ids, facts=None)
+    assert _headline_for(ev) == f"{jup[:8]} on-chain move"
+    assert "ComputeB" not in _headline_for(ev) and sysprog not in _headline_for(ev)
+    block = _facts_block(ev)
+    assert jup in block and cb not in block and sysprog not in block
+    assert jup in _query_for(ev)
+
+    # All-infra, undecoded → no fabricated entity anywhere.
+    ev2 = LogEvent("5xINFRANODECODE12345", [], sorted({cb, sysprog}), facts=None)
+    assert _headline_for(ev2) == "ON-CHAIN ACTIVITY"
+    assert "- Program:" not in _facts_block(ev2)
+
+
+def test_serve_feed_endpoints(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+    import requests
+
+    recipient = "E" * 44
+    target_sig = "B" * 88
+    payment_sig = "D" * 88
+    failed_payment_sig = "F" * 88
+    payer_wallet = "C" * 44
+    
+    monkeypatch.setenv("AGENT_PAYMENT_WALLET", recipient)
+    monkeypatch.setenv("ATTEST_CLUSTER", "devnet")
+    monkeypatch.setenv("ATTEST_RPC_URL", "https://api.devnet.solana.com")
+    monkeypatch.setenv("PAYMENTS_LEDGER_PATH", str(tmp_path / "payments.json"))
+    
+    root = Path(__file__).resolve().parents[1]
+    if str(root / "scripts") not in sys.path:
+        sys.path.insert(0, str(root / "scripts"))
+        
+    import serve_feed
+    monkeypatch.setattr(serve_feed, "agent_payment_wallet", recipient)
+    monkeypatch.setattr(serve_feed, "rpc_url", "https://api.devnet.solana.com")
+    monkeypatch.setattr(serve_feed, "PAYMENTS_LEDGER_PATH", tmp_path / "payments.json")
+    
+    from serve_feed import verify_and_trigger_brief
+    
+    mock_rpc_calls = []
+    
+    class MockResponse:
+        def __init__(self, json_data, status_code=200):
+            self.json_data = json_data
+            self.status_code = status_code
+        def json(self):
+            return self.json_data
+        def raise_for_status(self):
+            pass
+
+    def mock_post(url, json=None, **kwargs):
+        mock_rpc_calls.append(json)
+        method = json.get("method")
+        if method == "getTransaction":
+            sig = json["params"][0]
+            if sig == payment_sig:
+                return MockResponse({
+                    "result": {
+                        "meta": {
+                            "err": None,
+                            "preBalances": [10000000, 5000000],
+                            "postBalances": [9000000, 6000000]
+                        },
+                        "transaction": {
+                            "message": {
+                                "accountKeys": [
+                                    {"pubkey": payer_wallet, "signer": True},
+                                    {"pubkey": recipient, "signer": False},
+                                ],
+                                "instructions": [
+                                    {
+                                        "programId": serve_feed.MEMO_PROGRAM_ID,
+                                        "parsed": json_module.dumps({
+                                            "app": "onchainbrief",
+                                            "target_sig": target_sig,
+                                            "nonce": "nonce-1",
+                                        }),
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                })
+            elif sig == failed_payment_sig:
+                return MockResponse({
+                    "result": {
+                        "meta": {
+                            "err": {"InstructionError": [0, "DummyError"]}
+                        }
+                    }
+                })
+            elif sig == target_sig:
+                return MockResponse({
+                    "result": {
+                        "slot": 42,
+                        "meta": {
+                            "logMessages": ["Program log: Instruction: Initialize", "Program BPFLoaderUpgradeab1e11111111111111111111111 invoke [1]"]
+                        }
+                    }
+                })
+        return MockResponse({"result": None})
+
+    import json as json_module
+    monkeypatch.setattr(requests, "post", mock_post)
+    monkeypatch.setenv("AGENT_PAYMENT_WALLET", recipient)
+    
+    ok, msg, status = verify_and_trigger_brief(target_sig, payment_sig, payer_wallet)
+    assert ok is True
+    assert status == 200
+    assert "Brief analysis queued" in msg
+
+    ok_replay, msg_replay, status_replay = verify_and_trigger_brief(target_sig, payment_sig, payer_wallet)
+    assert ok_replay is False
+    assert status_replay == 409
+    assert "already been used" in msg_replay
+
+    ok_fail, msg_fail, status_fail = verify_and_trigger_brief(target_sig, failed_payment_sig, payer_wallet)
+    assert ok_fail is False
+    assert status_fail == 400
+    assert "failed on-chain" in msg_fail
+
+
+def test_queue_full_releases_payment_for_retry(tmp_path, monkeypatch):
+    """T4: when the on-demand queue is full the verified payment must NOT be
+    consumed — the reservation is released so the same paid tx can be retried
+    once the queue drains. Regression for a paid request that could never be
+    serviced."""
+    import sys
+    import json as json_module
+    from pathlib import Path
+    import queue as queue_module
+    import requests
+
+    recipient = "E" * 44
+    target_sig = "B" * 88
+    payment_sig = "D" * 88
+    payer_wallet = "C" * 44
+
+    monkeypatch.setenv("AGENT_PAYMENT_WALLET", recipient)
+    monkeypatch.setenv("ATTEST_CLUSTER", "devnet")
+    monkeypatch.setenv("ATTEST_RPC_URL", "https://api.devnet.solana.com")
+    monkeypatch.setenv("PAYMENTS_LEDGER_PATH", str(tmp_path / "payments.json"))
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root / "scripts") not in sys.path:
+        sys.path.insert(0, str(root / "scripts"))
+
+    import serve_feed
+    monkeypatch.setattr(serve_feed, "agent_payment_wallet", recipient)
+    monkeypatch.setattr(serve_feed, "rpc_url", "https://api.devnet.solana.com")
+    monkeypatch.setattr(serve_feed, "PAYMENTS_LEDGER_PATH", tmp_path / "payments.json")
+    # Reports not-full at the early fast-path check, but raises on put_nowait —
+    # forces the reserve→Full→release path (the actual fix), not the early
+    # short-circuit, so the test proves the reservation is undone.
+    class FullOnPut:
+        def full(self):
+            return False
+        def put_nowait(self, item):
+            raise queue_module.Full
+    monkeypatch.setattr(serve_feed, "demand_jobs", FullOnPut())
+
+    class MockResponse:
+        def __init__(self, json_data):
+            self.json_data = json_data
+        def json(self):
+            return self.json_data
+        def raise_for_status(self):
+            pass
+
+    def mock_post(url, json=None, **kwargs):
+        return MockResponse({
+            "result": {
+                "meta": {
+                    "err": None,
+                    "preBalances": [10000000, 5000000],
+                    "postBalances": [9000000, 6000000],
+                },
+                "transaction": {
+                    "message": {
+                        "accountKeys": [
+                            {"pubkey": payer_wallet, "signer": True},
+                            {"pubkey": recipient, "signer": False},
+                        ],
+                        "instructions": [
+                            {
+                                "programId": serve_feed.MEMO_PROGRAM_ID,
+                                "parsed": json_module.dumps({
+                                    "app": "onchainbrief",
+                                    "target_sig": target_sig,
+                                    "nonce": "nonce-1",
+                                }),
+                            }
+                        ],
+                    }
+                },
+            }
+        })
+
+    monkeypatch.setattr(requests, "post", mock_post)
+
+    ok, msg, status = serve_feed.verify_and_trigger_brief(
+        target_sig, payment_sig, payer_wallet
+    )
+    assert ok is False
+    assert status == 503
+    assert "queue is full" in msg
+
+    # The crux of T4: the payment + nonce were released, not consumed.
+    ledger = json_module.loads(
+        (tmp_path / "payments.json").read_text(encoding="utf-8")
+    ) if (tmp_path / "payments.json").exists() else {"payments": {}, "nonces": {}}
+    assert payment_sig not in ledger.get("payments", {})
+    assert "nonce-1" not in ledger.get("nonces", {})
+
+
+def test_token_amount_falls_back_to_string_and_raw():
+    """uiAmount is null for some mints/encodings; the SPL-move detector must
+    still recover the size from uiAmountString, then from the raw atomic
+    amount/decimals pair, before giving up — otherwise a real transfer reads
+    as zero and the move is silently dropped."""
+    from onchainbrief.txfacts import _token_move
+
+    usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+    # uiAmount is None but the string form carries the size.
+    via_string = {
+        "meta": {
+            "preTokenBalances": [
+                {"owner": "RECIP", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": None, "uiAmountString": "0"}},
+            ],
+            "postTokenBalances": [
+                {"owner": "RECIP", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": None, "uiAmountString": "123.45"}},
+            ],
+        }
+    }
+    move = _token_move(via_string)
+    assert move is not None
+    amount, mint, _send_owner, recv_owner = move
+    assert abs(amount - 123.45) < 1e-9
+    assert mint == usdc and recv_owner == "RECIP"
+
+    # No uiAmount, no string — only the raw atomic amount + decimals (1.5 USDC).
+    via_raw = {
+        "meta": {
+            "preTokenBalances": [
+                {"owner": "RECIP", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": None, "amount": "0", "decimals": 6}},
+            ],
+            "postTokenBalances": [
+                {"owner": "RECIP", "mint": usdc,
+                 "uiTokenAmount": {"uiAmount": None, "amount": "1500000", "decimals": 6}},
+            ],
+        }
+    }
+    move_raw = _token_move(via_raw)
+    assert move_raw is not None
+    assert abs(move_raw[0] - 1.5) < 1e-9
+
+
+def test_feed_rpc_hosts_are_covered_by_csp():
+    """The browser verifier fetch must never be CSP-blocked: every Solana RPC
+    origin the generated feed JS hits has to appear in the server's
+    connect-src. Regression for the mainnet publicnode host being absent from
+    the CSP while feed.py used it for mainnet verify."""
+    import re as _re
+    from urllib.parse import urlsplit
+    from onchainbrief.feed import _render
+    import serve_feed
+
+    html_out = _render([])
+    rpc_urls: list[str] = []
+    # Only the right-hand side of `const rpcUrl = …;` — not every line that
+    # merely references the variable (e.g. the unpkg web3 fetch).
+    for rhs in _re.findall(r"rpcUrl\s*=\s*([^;]+);", html_out):
+        rpc_urls += _re.findall(r"'(https://[^']+)'", rhs)
+    assert rpc_urls, "expected at least one rpcUrl in the generated feed JS"
+
+    csp = serve_feed.build_csp()
+    connect_src = next(
+        d for d in csp.split(";") if d.strip().startswith("connect-src")
+    )
+    for url in rpc_urls:
+        p = urlsplit(url)
+        origin = f"{p.scheme}://{p.netloc}"
+        assert origin in connect_src, f"{origin} missing from CSP connect-src"
+
 

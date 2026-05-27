@@ -16,9 +16,12 @@ from eth_account import Account
 from eth_account.messages import encode_typed_data
 
 from .config import (
-    ACE_API_BASE,
-    ACE_ENDPOINTS,
     ACE_IMAGE_TASKS_PATH,
+    X402_ALLOWED_PAY_TO,
+    X402_EXPECTED_ASSET,
+    X402_EXPECTED_CHAIN_ID,
+    X402_EXPECTED_VERIFYING_CONTRACT,
+    X402_MAX_AMOUNT_REQUIRED,
     X402_NETWORK,
     Settings,
 )
@@ -34,6 +37,66 @@ def _pick_accept(challenge: dict) -> dict:
         if a.get("network") == X402_NETWORK and a.get("scheme") == "exact":
             return a
     raise X402Error(f"no base/exact entry in challenge: {challenge}")
+
+
+def _validate_accept(accept: dict) -> None:
+    """Reject a 402 challenge before signing if it violates our spending policy.
+
+    A signed EIP-3009 authorization is a bearer instrument: whoever holds it can
+    pull `value` USDC from our wallet on the named chain. We therefore refuse to
+    sign anything that exceeds the configured cap, targets the wrong chain/asset,
+    or pays an address outside an (optional) allowlist — turning a compromised or
+    buggy facilitator into a hard failure instead of a silent drain.
+    """
+    if accept.get("scheme") != "exact":
+        raise X402Error(f"x402 policy: unexpected scheme {accept.get('scheme')!r}")
+    if accept.get("network") != X402_NETWORK:
+        raise X402Error(f"x402 policy: unexpected network {accept.get('network')!r}")
+
+    try:
+        amount = int(accept["maxAmountRequired"])
+    except (KeyError, TypeError, ValueError):
+        raise X402Error("x402 policy: missing/invalid maxAmountRequired")
+    if amount <= 0:
+        raise X402Error(f"x402 policy: non-positive amount {amount}")
+    if amount > X402_MAX_AMOUNT_REQUIRED:
+        raise X402Error(
+            f"x402 policy: amount {amount} exceeds cap {X402_MAX_AMOUNT_REQUIRED} "
+            "(atomic USDC) — raise X402_MAX_AMOUNT_REQUIRED if intended"
+        )
+
+    extra = accept.get("extra") or {}
+    try:
+        chain_id = int(extra["chainId"])
+    except (KeyError, TypeError, ValueError):
+        raise X402Error("x402 policy: missing/invalid extra.chainId")
+    if chain_id != X402_EXPECTED_CHAIN_ID:
+        raise X402Error(
+            f"x402 policy: chainId {chain_id} != expected {X402_EXPECTED_CHAIN_ID}"
+        )
+
+    # Asset is not always present in the accept block; only enforce when given.
+    asset = accept.get("asset")
+    if asset and asset.lower() != X402_EXPECTED_ASSET.lower():
+        raise X402Error(
+            f"x402 policy: asset {asset} != expected {X402_EXPECTED_ASSET}"
+        )
+
+    if X402_EXPECTED_VERIFYING_CONTRACT:
+        vc = str(extra.get("verifyingContract", ""))
+        if vc.lower() != X402_EXPECTED_VERIFYING_CONTRACT.lower():
+            raise X402Error(
+                f"x402 policy: verifyingContract {vc} != expected "
+                f"{X402_EXPECTED_VERIFYING_CONTRACT}"
+            )
+
+    allowed = [a.strip().lower() for a in X402_ALLOWED_PAY_TO.split(",") if a.strip()]
+    if allowed:
+        pay_to = str(accept.get("payTo", "")).lower()
+        if pay_to not in allowed:
+            raise X402Error(
+                f"x402 policy: payTo {accept.get('payTo')!r} not in allowlist"
+            )
 
 
 def _sign_x_payment(account, accept: dict) -> str:
@@ -100,7 +163,7 @@ def _sign_x_payment(account, accept: dict) -> str:
 class X402Client:
     def __init__(self, settings: Settings | None = None, timeout: float = 120.0):
         self.settings = settings or Settings.load()
-        # ACE_API_TOKEN is NOT required — sending Bearer disables 402.
+        # ACE_API_TOKEN is NOT required - sending Bearer disables 402.
         self.settings.require("ace_x402_private_key")
         self.timeout = timeout
         self._account = Account.from_key(self.settings.ace_x402_private_key)
@@ -109,6 +172,9 @@ class X402Client:
             "accept": "application/json",
             "content-type": "application/json",
         })
+        # Dynamic tool discovery via Solana SAP registry
+        from .discovery import discover_ace_endpoints
+        self.api_base, self.endpoints = discover_ace_endpoints(self.settings.solana_rpc_url)
 
     @property
     def pay_address(self) -> str:
@@ -132,6 +198,7 @@ class X402Client:
                 except Exception:
                     raise X402Error(f"{url} 402 body not JSON: {r1.text[:500]}")
                 accept = _pick_accept(challenge)
+                _validate_accept(accept)
                 x_payment = _sign_x_payment(self._account, accept)
                 r2 = self._s.post(
                     url, json=payload, timeout=timeout,
@@ -151,14 +218,14 @@ class X402Client:
 
 
     def call(self, service: str, payload: dict[str, Any]) -> requests.Response:
-        url = f"{ACE_API_BASE}{ACE_ENDPOINTS[service]}"
+        url = f"{self.api_base}{self.endpoints[service]}"
         timeout = max(self.timeout, 300.0) if service == "image" else self.timeout
         return self._post_x402(url, payload, timeout=timeout)
 
     def image_task(self, task_id: str) -> requests.Response:
-        """Poll an async image task. Free per ACE docs — credit/x402 not charged."""
+        """Poll an async image task. Free per ACE docs - credit/x402 not charged."""
         return self._post_x402(
-            f"{ACE_API_BASE}{ACE_IMAGE_TASKS_PATH}",
+            f"{self.api_base}{ACE_IMAGE_TASKS_PATH}",
             {"id": task_id},
             timeout=self.timeout,
         )

@@ -1,4 +1,4 @@
-"""AceBriefClient — the BriefClient adapter over ACE's services.
+"""AceBriefClient - the BriefClient adapter over ACE's services.
 
 Translates the generic pipeline interface (serp, chat, image) into concrete calls
 settled via Bearer token credits or on-chain x402 payments.
@@ -87,7 +87,7 @@ class AceBriefClient:
             or (body.get("data") if isinstance(body.get("data"), list) else None)
             or []
         )
-        # Guarantee a list before slicing/iterating — a malformed dict here
+        # Guarantee a list before slicing/iterating - a malformed dict here
         # would otherwise raise, contradicting the "defensive" contract.
         if isinstance(organic, dict):
             organic = _first(organic, "organic", "results") or list(

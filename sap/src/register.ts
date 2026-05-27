@@ -47,28 +47,10 @@ const {
 const {
   Keypair,
   LAMPORTS_PER_SOL,
-  PublicKey,
   SystemProgram,
 } = require("@solana/web3.js");
 const BN = require("bn.js");
 const bs58 = require("bs58");
-
-/**
- * Derive the AgentPricingMenu PDA — seeds = ["sap_pricing", agentPda].
- *
- * On-chain `register_agent` expects this account at index 3 in the
- * instruction's account list, but the bundled SDK IDL (through 0.17.x)
- * doesn't declare it for that instruction. We supply it manually below.
- */
-function derivePricingMenu(
-  agentPda: InstanceType<typeof PublicKey>,
-  programId: InstanceType<typeof PublicKey>,
-): [InstanceType<typeof PublicKey>, number] {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("sap_pricing"), agentPda.toBuffer()],
-    programId,
-  );
-}
 
 const PLAN_MODE = process.argv.includes("--plan");
 const MAINNET_MODE = process.argv.includes("--mainnet");
@@ -198,8 +180,12 @@ async function main() {
   console.log();
 
   // ─── Step 2: Connect to network ───
+  // Mainnet RPC is overridable: the default api.mainnet-beta host is
+  // unreachable on some networks, so fall back to a keyless public RPC.
   const sapConn = MAINNET_MODE
-    ? SapConnection.mainnet()
+    ? SapConnection.mainnet(
+        process.env.SOLANA_RPC_URL || "https://solana-rpc.publicnode.com",
+      )
     : SapConnection.devnet();
   const client = sapConn.fromKeypair(keypair);
   console.log(`  [2/7] Connected to Solana ${NETWORK_LABEL}`);
@@ -401,9 +387,13 @@ async function main() {
 
     const [statsPda] = deriveAgentStats(agentPda);
     const [globalPda] = deriveGlobalRegistry();
-    const [pricingPda] = derivePricingMenu(agentPda, client.program.programId);
 
-    const ix = await client.program.methods
+    // register_agent takes exactly the 5 accounts the IDL declares, in
+    // order: wallet, agent, agentStats, globalRegistry, systemProgram.
+    // (Verified by mainnet simulation: this set succeeds; adding any
+    // extra account shifts globalRegistry out of slot 3 and the program
+    // then reports it as uninitialized -> 3012.)
+    const registerTx = await client.program.methods
       .registerAgent(
         AGENT_NAME,
         AGENT_DESCRIPTION,
@@ -421,25 +411,11 @@ async function main() {
         globalRegistry: globalPda,
         systemProgram: SystemProgram.programId,
       })
-      .instruction();
-
-    ix.keys.splice(3, 0, {
-      pubkey: pricingPda,
-      isSigner: false,
-      isWritable: true,
-    });
-
-    const provider = client.program.provider;
-    const { Transaction } = require("@solana/web3.js");
-    const tx = new Transaction().add(ix);
-    const registerTx = await provider.sendAndConfirm(tx, [keypair], {
-      commitment: "confirmed",
-    });
+      .rpc({ commitment: "confirmed" });
 
     console.log(`         TX: ${registerTx}`);
     console.log(`         Agent registered on-chain.`);
     console.log(`         Agent PDA: ${agentPda.toBase58()}`);
-    console.log(`         PricingMenu PDA: ${pricingPda.toBase58()}`);
   }
   console.log();
 

@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import sys
 
@@ -20,18 +21,25 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from onchainbrief.feed import build_feed  # noqa: E402
 
+# Env defaults so the same BRIEFS_DIR / SITE_HTML contract used by e2e_demo.py
+# and serve_feed.py also drives the build step — e.g. on a Railway deploy that
+# serves briefs from a persistent volume, point all three at /data via env and
+# the runtime rebuild picks up the volume. An explicit CLI flag still wins.
+_DEFAULT_BRIEFS = os.getenv("BRIEFS_DIR", str(ROOT / "briefs"))
+_DEFAULT_OUT = os.getenv("SITE_HTML", str(ROOT / "site" / "index.html"))
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build the OnchainBrief static feed.")
     ap.add_argument(
         "--briefs",
-        default=str(ROOT / "briefs"),
-        help="directory of produced briefs (default: ./briefs)",
+        default=_DEFAULT_BRIEFS,
+        help="directory of produced briefs (default: $BRIEFS_DIR or ./briefs)",
     )
     ap.add_argument(
         "--out",
-        default=str(ROOT / "site" / "index.html"),
-        help="output html path (default: ./site/index.html)",
+        default=_DEFAULT_OUT,
+        help="output html path (default: $SITE_HTML or ./site/index.html)",
     )
     args = ap.parse_args(argv)
 

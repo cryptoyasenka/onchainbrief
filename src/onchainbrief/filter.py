@@ -1,7 +1,7 @@
 """'Is this event worth a brief?' filter.
 
 Runs on any LOCAL OpenAI-compatible endpoint (llama.cpp / vLLM / Ollama /
-NVIDIA build, etc.) so it costs nothing and never spends ACE credits — only
+NVIDIA build, etc.) so it costs nothing and never spends ACE credits - only
 events that pass here reach the paid pipeline. Falls back to a conservative
 heuristic when no local model is configured, so the watcher path is
 testable offline.
@@ -13,6 +13,7 @@ import os
 
 import requests
 
+from .txfacts import SWAP_PROGRAMS as _SWAP_PROGRAMS
 from .watcher import LogEvent
 
 LOCAL_LLM_BASE = os.getenv("LOCAL_LLM_BASE", "")  # e.g. http://localhost:8080/v1
@@ -66,3 +67,55 @@ def is_brief_worthy(ev: LogEvent, timeout: float = 20.0) -> bool:
     except Exception:
         # Never let a triage outage spend credits; default to skip.
         return False
+
+
+# EventFacts.kind -> feed category. Decoded facts beat log heuristics because
+# they reflect what the transaction actually moved, not what it logged.
+_KIND_TO_CATEGORY = {
+    "deploy": "Deployment",
+    "whale_transfer": "Volume",
+    "token_transfer": "Volume",
+    "swap": "Volume",
+    "security": "Security",
+    "governance": "Governance",
+}
+
+
+def categorize_event(ev: LogEvent) -> str:
+    """Categorize an on-chain event, preferring decoded facts over log text."""
+    facts = getattr(ev, "facts", None)
+    if facts is not None:
+        cat = _KIND_TO_CATEGORY.get(getattr(facts, "kind", ""))
+        if cat:
+            return cat
+
+    logs_lower = "\n".join(ev.logs).lower()
+    programs_lower = [p.lower() for p in ev.program_ids]
+
+    # 1. Deployments and Upgrades
+    if (
+        "bpfloaderupgradeab1e11111111111111111111111" in programs_lower or
+        any(k in logs_lower for k in ["upgrade", "deploy", "initialize", "init_program"])
+    ):
+        return "Deployment"
+
+    # 2. Security Alerts / Admin Actions
+    if any(k in logs_lower for k in ["set authority", "freeze", "disable", "pause", "paused", "multisig", "revoke", "exploit", "compromise", "attacker", "hack"]):
+        return "Security"
+
+    # 3. Market Movements / Large Volume
+    defi_keywords = ["swap", "route", "liquidity", "heavy flow", "large transfer", "million", "pool", "mint", "burn"]
+    # Real DEX/AMM program ids (lowercased to match programs_lower), single-sourced
+    # from txfacts so this set can't drift into the mangled placeholders it once held.
+    defi_programs = {p.lower() for p in _SWAP_PROGRAMS}
+    if (
+        any(p in defi_programs for p in programs_lower) or
+        any(k in logs_lower for k in defi_keywords)
+    ):
+        return "Volume"
+
+    # 4. Governance & Council voting
+    if any(k in logs_lower for k in ["propose", "proposal", "vote", "voted", "council", "governance", "proposal_state"]):
+        return "Governance"
+
+    return "Activity"
