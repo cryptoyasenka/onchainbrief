@@ -20,6 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from onchainbrief.feed import build_feed  # noqa: E402
+from onchainbrief.proof import build_proof  # noqa: E402
 
 # Env defaults so the same BRIEFS_DIR / SITE_HTML contract used by e2e_demo.py
 # and serve_feed.py also drives the build step — e.g. on a Railway deploy that
@@ -51,8 +52,12 @@ def main(argv: list[str] | None = None) -> int:
         briefs.mkdir(parents=True, exist_ok=True)
 
     out = build_feed(briefs, args.out)
+    # Emit the public proof manifest alongside the page so the static deploy
+    # serves /proof.json (the one-stop audit trail) with no extra route.
+    proof = build_proof(briefs, out.parent / "proof.json")
     n = len(list(briefs.glob("*.md")))
     print(f"Built {out} from {n} brief(s) in {briefs}")
+    print(f"Wrote proof manifest {proof}")
     return 0
 
 

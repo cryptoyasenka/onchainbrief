@@ -30,10 +30,11 @@ Thumbs.db
 .gstack/
 .superstack/
 .state/
-.planning/ACE-MEASUREMENTS.md
-# sponsor-ref helper can print SAP_PRIVATE_KEY — never let it near git.
-.planning/sponsor-ref/
-.planning/sample_card.png
+# .planning/ is local working memory (CURRENT.md, audits, drafts). Never
+# tracked: publishing is scrub-only (scripts/scrub_public_repo.py SKIP_DIRS),
+# and the sponsor-ref helper can print SAP_PRIVATE_KEY — so the whole dir
+# stays out of git.
+.planning/
 
 # Curated launch feed. `briefs/` (the .md + .png + .attest.json a funded e2e
 # run produced) and the rendered `site/` are committed so a fresh Railway

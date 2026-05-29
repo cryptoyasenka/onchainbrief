@@ -2,14 +2,12 @@
 
 ![card](65PNPvjZgGRwPFne.png)
 
-The program BvAPdAKHMsku has been upgraded via the BPF upgradeable loader. This upgrade indicates ongoing development and potential enhancements in functionality for applications within the Solana ecosystem.
+The program `BvAPdAKHMsku` was upgraded through the BPF upgradeable loader. An upgrade replaces the program's on-chain code under its existing address, so anything that relied on the previous behavior should be re-checked against the new version.
 
 ## Sources
+- https://solscan.io/account/BvAPdAKHMskuT3sVxkgrvsboNHRnbf2rXexrMh2E3RKi
+- https://solscan.io/account/94JNQxXp6q95kW6p5uobgRzMdLqQztpy89CPFS89EZWC
 - https://solana.com/docs/core/programs/program-deployment
-- https://solana.stackexchange.com/questions/3286/difference-bewteen-solana-deploy-and-solana-program-deploy
-- https://sec3.dev/blog/solana-internals-part-2-how-is-a-solana-program-deployed-and-upgraded
-- https://www.youtube.com/watch?v=Ghi8il2EQeg
-- https://blocksecteam.medium.com/secure-the-solana-ecosystem-3-program-upgrade-5590c746016
 
 ## Provenance
 Solana tx `65PNPvjZgGRwPFneFnZZpjoLmqhRyw1qPPvPgBjuvzZMXmDTzmk3BKqFhZXGxe4KuFbf84ogBwLpiR5F3ejt1f9x` — https://solscan.io/tx/65PNPvjZgGRwPFneFnZZpjoLmqhRyw1qPPvPgBjuvzZMXmDTzmk3BKqFhZXGxe4KuFbf84ogBwLpiR5F3ejt1f9x

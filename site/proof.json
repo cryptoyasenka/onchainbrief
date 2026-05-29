@@ -1,0 +1,93 @@
+{
+  "project": "OnchainBrief",
+  "summary": "Each brief binds an AI-written market summary to a real Solana trigger transaction, three paid Ace Data Cloud calls settled on Base via x402, and a Solana mainnet Memo receipt that the browser verifies byte-for-byte.",
+  "agent": {
+    "protocol": "Synapse Agent Protocol (SAP)",
+    "agent_pda": "DsTZa5xY4sF8y3JFdE53B8T9xEsYtvntEUggm6FwMgVi",
+    "capability": "onchainbrief:event-to-brief"
+  },
+  "payments": {
+    "protocol": "x402",
+    "network": "base",
+    "asset_usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "facilitator_pay_to": "0x4F0E2D3477a1B94CF33d16E442CEe4733dadCeE7"
+  },
+  "how_to_verify": "For any card, recompute sha256(card_image bytes followed by brief_markdown bytes); it equals artifact_sha256, which is the 'sha256' field inside the Memo payload of attestation_tx on the named Solana cluster.",
+  "card_count": 4,
+  "cards": [
+    {
+      "id": "2mdJjk7WbnYpcDE2",
+      "category": "Deployment",
+      "headline": "NEW SOLANA PROGRAM DEPLOYED",
+      "trigger_signature": "2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa",
+      "trigger_explorer": "https://solscan.io/tx/2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa",
+      "card_image": "2mdJjk7WbnYpcDE2.png",
+      "brief_markdown": "2mdJjk7WbnYpcDE2.md",
+      "artifact_sha256": "95c173a5ab3e87ba780e8bad0c82bdd9df26bb70a1e0f7f4c7d7166946921a14",
+      "memo_payload_sha256": "a81eb4a9eea6d877d6ef15f0d0a27c9a00c385d88566bca1949fda7cbfb442ae",
+      "attestation_tx": "55kedkZiL65QHtAyZ9H1tNMPdadnkxBJpAyQUb3UXmGWhcRgHViPSsa6N9r7LdoD7ddTgbUP9SxqM6JJhcsXKbeg",
+      "attestation_cluster": "mainnet-beta",
+      "attestation_explorer": "https://solscan.io/tx/55kedkZiL65QHtAyZ9H1tNMPdadnkxBJpAyQUb3UXmGWhcRgHViPSsa6N9r7LdoD7ddTgbUP9SxqM6JJhcsXKbeg",
+      "sources": [
+        "https://solscan.io/tx/2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa"
+      ]
+    },
+    {
+      "id": "2YxfWHLxbs4hya1k",
+      "category": "Deployment",
+      "headline": "PROGRAM DEPLOYED VIA BPF LOADER",
+      "trigger_signature": "2YxfWHLxbs4hya1kYaQSDRJdu528YfUFxgr3L7hiJWax7Drx2FMU1KpAi4c6ajjoufGtHXwHUALuYE3k2UmdsBfy",
+      "trigger_explorer": "https://solscan.io/tx/2YxfWHLxbs4hya1kYaQSDRJdu528YfUFxgr3L7hiJWax7Drx2FMU1KpAi4c6ajjoufGtHXwHUALuYE3k2UmdsBfy",
+      "card_image": "2YxfWHLxbs4hya1k.png",
+      "brief_markdown": "2YxfWHLxbs4hya1k.md",
+      "artifact_sha256": "a0e65744c8eb40f6965f08d252c77955a4967855a772a686121f7c46ffaa4bc5",
+      "memo_payload_sha256": "9bd2d61c2d3caaf80d29c884c8c653d88d671e2af1e9660112acac663b66aadd",
+      "attestation_tx": "2o5fkNsCHWwV5R9ZXc3VVHANwquybB22t9EpSq6Nxnn5UzH3FonRacwphfDi8bNSvp3cHHgSe56dpx9SPy1JA7Cv",
+      "attestation_cluster": "mainnet-beta",
+      "attestation_explorer": "https://solscan.io/tx/2o5fkNsCHWwV5R9ZXc3VVHANwquybB22t9EpSq6Nxnn5UzH3FonRacwphfDi8bNSvp3cHHgSe56dpx9SPy1JA7Cv",
+      "sources": [
+        "https://solscan.io/tx/2YxfWHLxbs4hya1kYaQSDRJdu528YfUFxgr3L7hiJWax7Drx2FMU1KpAi4c6ajjoufGtHXwHUALuYE3k2UmdsBfy"
+      ]
+    },
+    {
+      "id": "4PXfW42xg51VBNoa",
+      "category": "Governance",
+      "headline": "LOCKED STAKE FINALIZED",
+      "trigger_signature": "4PXfW42xg51VBNoaYuKYb6srjFQfXup4yAgYEEtRWVXJeck5cNML5JcqxNPd9bphNxPXvaiNqDZh19c2J25TnaGK",
+      "trigger_explorer": "https://solscan.io/tx/4PXfW42xg51VBNoaYuKYb6srjFQfXup4yAgYEEtRWVXJeck5cNML5JcqxNPd9bphNxPXvaiNqDZh19c2J25TnaGK",
+      "card_image": "4PXfW42xg51VBNoa.png",
+      "brief_markdown": "4PXfW42xg51VBNoa.md",
+      "artifact_sha256": "a4c9602b8268d5c37fd66f7ed873154c9b5b831a39acaca2c9f75d171a0269e6",
+      "memo_payload_sha256": "19671b4d15cbfdb56bbb7745fbbc5787527f89f046b75343e1161ed662154e65",
+      "attestation_tx": "3b9P47N8fQKJW7NNxs3jSyTMqQTqYoKvebuaW3XdRDRoHqA7GSXG7fBTL1ifNoYJQrLXqwokXJ8VcbaQ2ddH6Dob",
+      "attestation_cluster": "mainnet-beta",
+      "attestation_explorer": "https://solscan.io/tx/3b9P47N8fQKJW7NNxs3jSyTMqQTqYoKvebuaW3XdRDRoHqA7GSXG7fBTL1ifNoYJQrLXqwokXJ8VcbaQ2ddH6Dob",
+      "sources": [
+        "https://github.com/solana-labs/solana-program-library/blob/master/governance/README.md",
+        "https://lib.rs/crates/spl-governance",
+        "https://solana.com/developers/dao",
+        "https://www.helius.dev/blog/solana-governance--a-comprehensive-analysis",
+        "https://medium.com/coinmonks/solana-dao-governance-part-1-understanding-spl-governance-3ccf6d6912bc"
+      ]
+    },
+    {
+      "id": "65PNPvjZgGRwPFne",
+      "category": "Deployment",
+      "headline": "PROGRAM UPGRADED TO BvAPdAKHMsku",
+      "trigger_signature": "65PNPvjZgGRwPFneFnZZpjoLmqhRyw1qPPvPgBjuvzZMXmDTzmk3BKqFhZXGxe4KuFbf84ogBwLpiR5F3ejt1f9x",
+      "trigger_explorer": "https://solscan.io/tx/65PNPvjZgGRwPFneFnZZpjoLmqhRyw1qPPvPgBjuvzZMXmDTzmk3BKqFhZXGxe4KuFbf84ogBwLpiR5F3ejt1f9x",
+      "card_image": "65PNPvjZgGRwPFne.png",
+      "brief_markdown": "65PNPvjZgGRwPFne.md",
+      "artifact_sha256": "94b1c2cd638ce67bc9456f415ec319e17d9a73b49dee4d4d3b7b610e15b06baa",
+      "memo_payload_sha256": "ba28dd4f37e69eaacc13fa74bc543997c5668874d5d78e19f9a610214c413390",
+      "attestation_tx": "4hTwDyis3yRbqfjDz3bdKPKar8MtVsERgR5zbwbmix4HP1RAMfbwQ6SAK1ERRoGTXcRxV8QdSdWDtgC4aWtceziU",
+      "attestation_cluster": "mainnet-beta",
+      "attestation_explorer": "https://solscan.io/tx/4hTwDyis3yRbqfjDz3bdKPKar8MtVsERgR5zbwbmix4HP1RAMfbwQ6SAK1ERRoGTXcRxV8QdSdWDtgC4aWtceziU",
+      "sources": [
+        "https://solscan.io/account/BvAPdAKHMskuT3sVxkgrvsboNHRnbf2rXexrMh2E3RKi",
+        "https://solscan.io/account/94JNQxXp6q95kW6p5uobgRzMdLqQztpy89CPFS89EZWC",
+        "https://solana.com/docs/core/programs/program-deployment"
+      ]
+    }
+  ]
+}

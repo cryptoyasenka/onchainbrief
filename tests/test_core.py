@@ -175,6 +175,27 @@ def test_feed_visual_cards_are_quieted_without_mutating_artifacts():
     assert ".img-wrapper::after" not in h
 
 
+def test_feed_orders_strongest_card_first():
+    """The feed leads with the most newsworthy card — a governance action, then
+    a named program upgrade — rather than an anonymous fresh deploy, so the
+    first screen is the strongest one (audit F4)."""
+    from onchainbrief.feed import FeedItem, _feature_rank
+
+    def _it(headline, category, usd=0.0):
+        return FeedItem(headline=headline, card="", narrative="", signature="",
+                        sources=[], category=category, amount_usd=usd)
+
+    gov = _it("Locked stake finalized", "Governance")
+    upgrade = _it("Program UPGRADED via loader", "Deployment")
+    anon = _it("Program deployed via loader", "Deployment")
+    whale = _it("5M USDC routed via Jupiter", "Volume", usd=5_000_000)
+
+    ordered = sorted([anon, upgrade, gov, whale], key=_feature_rank)
+    assert ordered[0] is gov                       # governance leads
+    assert ordered.index(upgrade) < ordered.index(anon)   # named upgrade > anon deploy
+    assert ordered.index(whale) < ordered.index(anon)     # value move > plain deploy
+
+
 def test_feed_has_no_inline_event_handlers():
     """Frontend hardening (T8): every interactive element wires behaviour
     through a single delegated listener via data-action, not inline onclick/
@@ -195,13 +216,19 @@ def test_feed_has_no_inline_event_handlers():
     )
     h = _render([item], agent_payment_wallet="Wa11etPubKey1111111111111111111111111111111")
 
-    # No inline event-handler attributes anywhere in the rendered page.
-    assert "onclick" not in h
-    assert "onerror" not in h
-    assert "onload" not in h
+    # No inline event-handler attribute of ANY kind. The earlier onclick-only
+    # checks let the USD slider's `oninput` slip through; match the whole on*=
+    # family at HTML-attribute position. The leading word boundary + a quoted
+    # value distinguish a real attribute (` oninput="`) from JS member writes
+    # like `el.textContent = '...'` or `sse.onmessage = function`.
+    import re
+
+    inline = re.findall(r"""(?<![A-Za-z0-9_.])on[a-z]+\s*=\s*["']""", h)
+    assert inline == [], f"inline event handlers leaked: {sorted(set(inline))}"
     assert "javascript:" not in h
-    # Behaviour is wired through the delegated handler + data-action hooks.
+    # Behaviour is wired through delegated click + input listeners + data-action.
     assert "addEventListener('click'" in h
+    assert "addEventListener('input'" in h
     assert "data-action" in h
     assert 'data-action="verify"' in h and 'data-sig="ABCsig111"' in h
     assert 'data-action="lightbox"' in h
@@ -212,6 +239,36 @@ def test_feed_has_no_inline_event_handlers():
     assert "data-action='close-lightbox'" in h
     # The modal content shields its children so an inside-click cannot close it.
     assert "data-action='noop'" in h
+
+
+def test_feed_renders_proof_ladder():
+    """The proof-ladder strip (audit F4) gives a judge the 5-second end-to-end
+    proof story above the cards: five stages from the Solana trigger to the
+    in-browser MATCH, with real links to the on-chain agent and proof.json, and
+    an anchor jump to the verifiable cards. Anchors only — no inline handlers."""
+    import re
+    from onchainbrief.feed import _render, _AGENT_PDA, _LADDER_RUNGS
+
+    h = _render([])
+
+    titles = [t for _, t, _ in _LADDER_RUNGS]
+    assert len(titles) == 5
+    assert titles[0] == "Trigger" and titles[-1] == "MATCH"
+    # Every rung title renders, in pipeline order.
+    positions = [h.find(f"class='rung-title'>{t}</span>") for t in titles]
+    assert all(p != -1 for p in positions), "a ladder rung title is missing"
+    assert positions == sorted(positions), "ladder rungs are out of order"
+
+    # Real, verifiable links: SAP agent on-chain + machine-readable proof.json;
+    # the verify/MATCH rungs jump to the cards (#feed anchor target exists).
+    assert f"explorer.solana.com/address/{_AGENT_PDA}" in h
+    assert "href='/proof.json'" in h
+    assert "href='#feed'" in h
+    assert "id=feed" in h
+
+    # The ladder must not reintroduce any inline event handler.
+    inline = re.findall(r"""(?<![A-Za-z0-9_.])on[a-z]+\s*=\s*["']""", h)
+    assert inline == [], f"inline event handlers leaked: {sorted(set(inline))}"
 
 
 def test_throttle_caps_per_day(tmp_path, monkeypatch):
@@ -393,10 +450,16 @@ def test_handle_survives_pipeline_error_and_once_stops(tmp_path, monkeypatch):
     """A failed ACE call must NOT crash the watcher; --once must stop it."""
     import asyncio
 
-    from onchainbrief import run, throttle
+    from onchainbrief import run, throttle, txfacts
 
     monkeypatch.setattr(throttle, "STATE_PATH", tmp_path / "t.json")
     monkeypatch.setattr(throttle, "DAILY_CAP", 5)
+
+    # Decode the event into significant facts so it clears the editorial gate
+    # and actually reaches the (failing) pipeline this test is exercising.
+    def _fake_enrich(e, *a, **k):
+        e.facts = txfacts.EventFacts(kind="swap", amount_usd=500_000.0)
+    monkeypatch.setattr(txfacts, "enrich_event", _fake_enrich)
 
     ev = LogEvent("sigX", ["l"] * 8, ["A", "B"])  # heuristic-worthy
 
@@ -788,6 +851,99 @@ def test_x402_validate_accept_enforces_spending_policy(monkeypatch):
     )
 
 
+class _X402Resp:
+    """Minimal stand-in for requests.Response in x402 transport tests."""
+
+    def __init__(self, status, body=None):
+        self.status_code = status
+        self._body = body if body is not None else {}
+        self.text = "boom"
+
+    def json(self):
+        return self._body
+
+
+def test_x402_does_not_double_pay_after_ambiguous_failure(monkeypatch):
+    """F3: once X-PAYMENT is signed and sent, an ambiguous failure (5xx or a
+    dropped connection) must NOT be retried. A retry re-signs a fresh EIP-3009
+    nonce — a SECOND valid authorization that double-charges the wallet if the
+    first payment already settled. The call must hard-fail with an explicit
+    unknown-settlement error, having signed exactly once."""
+    import pytest
+    from eth_account import Account
+
+    from onchainbrief import x402_client
+
+    monkeypatch.setattr(x402_client.time, "sleep", lambda _s: None)
+
+    challenge = _X402Resp(402, {"accepts": [_policy_accept()]})
+
+    signs = {"n": 0}
+    real_sign = x402_client._sign_x_payment
+
+    def _counting_sign(account, accept):
+        signs["n"] += 1
+        return real_sign(account, accept)
+
+    monkeypatch.setattr(x402_client, "_sign_x_payment", _counting_sign)
+
+    def _client():
+        c = object.__new__(x402_client.X402Client)
+        c._account = Account.from_key("0x" + "11" * 32)
+        c.timeout = 30.0
+        return c
+
+    # Case A: a 5xx AFTER the X-PAYMENT post -> hard stop, no re-sign.
+    signs["n"] = 0
+    posts = {"n": 0}
+
+    class _Sess5xx:
+        def post(self, url, **kw):
+            posts["n"] += 1
+            if "X-PAYMENT" in (kw.get("headers") or {}):
+                return _X402Resp(502)
+            return challenge
+
+    c = _client()
+    c._s = _Sess5xx()
+    with pytest.raises(x402_client.X402Error, match="settlement state"):
+        c._post_x402("https://api.test/chat", {"q": 1}, timeout=30.0)
+    assert signs["n"] == 1   # signed exactly once
+    assert posts["n"] == 2   # 1 challenge + 1 payment, NOT a 4-post double-pay loop
+
+    # Case B: a dropped connection AFTER the X-PAYMENT post is equally ambiguous.
+    signs["n"] = 0
+
+    class _SessNet:
+        def post(self, url, **kw):
+            if "X-PAYMENT" in (kw.get("headers") or {}):
+                raise x402_client.requests.RequestException("connection reset")
+            return challenge
+
+    c = _client()
+    c._s = _SessNet()
+    with pytest.raises(x402_client.X402Error, match="settlement state"):
+        c._post_x402("https://api.test/chat", {"q": 1}, timeout=30.0)
+    assert signs["n"] == 1
+
+    # Case C: a PRE-payment 5xx is still safely retried (no money at risk yet),
+    # then the flow completes and signs exactly once.
+    signs["n"] = 0
+    seq = [_X402Resp(503), challenge]
+
+    class _SessRetry:
+        def post(self, url, **kw):
+            if "X-PAYMENT" in (kw.get("headers") or {}):
+                return _X402Resp(200, {"ok": True})
+            return seq.pop(0)
+
+    c = _client()
+    c._s = _SessRetry()
+    r = c._post_x402("https://api.test/chat", {"q": 1}, timeout=30.0)
+    assert r.status_code == 200
+    assert signs["n"] == 1
+
+
 def test_ace_brief_client_image_async_poll_transient_failures():
     from onchainbrief.ace_brief_client import AceBriefClient
 
@@ -957,7 +1113,12 @@ def test_compose_card_headline_and_subline_overflow(tmp_path):
 
 
 def test_x402_client_retry(monkeypatch):
+    """F3 integration: through the real X402Client.call() path, a 502 on the
+    X-PAYMENT post must raise (ambiguous settlement) instead of looping back to
+    re-sign a fresh nonce — the old behavior here paid twice and 'succeeded'."""
     import time
+
+    import pytest
     from onchainbrief.x402_client import X402Client, X402Error
     
     class MockSession:
@@ -986,32 +1147,10 @@ def test_x402_client_retry(monkeypatch):
                     ]
                 }
                 return _Resp(challenge, status=402)
-            elif self.post_calls == 2:
-                # Second attempt, simulate 502 gateway error on payment retry
-                return _Resp({}, status=502)
-            elif self.post_calls == 3:
-                # Third attempt (first retry iteration), return 402 challenge
-                challenge = {
-                    "accepts": [
-                        {
-                            "network": "base",
-                            "scheme": "exact",
-                            "payTo": "0x4F0E2D3477a1B94CF33d16E442CEe4733dadCeE7",
-                            "maxAmountRequired": "1000",
-                            "extra": {
-                                "name": "USD Coin",
-                                "version": "2",
-                                "chainId": "8453",
-                                "verifyingContract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-                            }
-                        }
-                    ]
-                }
-                return _Resp(challenge, status=402)
-            elif self.post_calls == 4:
-                # Fourth attempt (payment retry), return 200 OK
-                return _Resp({"success": True}, status=200)
-            return _Resp({}, status=500)
+            # call 2 is the X-PAYMENT post; a 502 here is an ambiguous
+            # settlement state (the facilitator may have already pulled funds),
+            # so the client must stop rather than re-sign and double-charge.
+            return _Resp({}, status=502)
 
     # Disable sleeping to make test run fast
     monkeypatch.setattr(time, "sleep", lambda _s: None)
@@ -1032,9 +1171,10 @@ def test_x402_client_retry(monkeypatch):
     mock_s = MockSession()
     monkeypatch.setattr(client, "_s", mock_s)
 
-    res = client.call("chat", {"test": 123})
-    assert res.status_code == 200
-    assert mock_s.post_calls == 4
+    with pytest.raises(X402Error, match="settlement state"):
+        client.call("chat", {"test": 123})
+    # Exactly one challenge fetch + one payment post. No re-sign loop.
+    assert mock_s.post_calls == 2
 
 
 def test_sap_tool_discovery_success(monkeypatch):
@@ -1088,6 +1228,81 @@ def test_sap_tool_discovery_success(monkeypatch):
     base, endpoints = discovery.discover_ace_endpoints("http://mock_rpc")
     assert base == "https://api.acedata.cloud"
     assert len(call_log) == 2
+
+
+def test_sap_discovery_defaults_allowlist_to_ace_and_rejects_foreign(monkeypatch):
+    """F2: with no SAP_ALLOWED_API_BASES pin, discovery must still refuse to
+    route paid calls to a host other than the known ACE base. The registry is
+    permissionless, so an unconstrained inferred base lets a squatter redirect
+    x402 payments. The default allowlist is [ACE_API_BASE]: a correctly
+    registered ACE endpoint still resolves identically, a foreign host is
+    rejected, and the top-level resolver falls back to the static ACE config."""
+    from onchainbrief import discovery
+
+    # The shipped default (no env pin) is exactly the known ACE base.
+    assert discovery.SAP_ALLOWED_API_BASES == [discovery.ACE_API_BASE]
+
+    monkeypatch.setattr(discovery, "SAP_EXPECTED_AGENT_PDA", "")
+    monkeypatch.setattr(
+        discovery, "get_agents_for_capability",
+        lambda rpc, cap: ["Agent1111111111111111111111111111111111111111"],
+    )
+
+    # Legit ACE facilitator endpoint -> inferred base == ACE base -> accepted.
+    monkeypatch.setattr(
+        discovery, "get_agent_x402_endpoint",
+        lambda rpc, agent: "https://facilitator.acedata.cloud/.well-known/x402",
+    )
+    assert discovery.discover_endpoint("rpc", "cap") == discovery.ACE_API_BASE
+
+    # A squatter's endpoint -> foreign inferred base -> rejected.
+    monkeypatch.setattr(
+        discovery, "get_agent_x402_endpoint",
+        lambda rpc, agent: "https://facilitator.evil.example/.well-known/x402",
+    )
+    assert discovery.discover_endpoint("rpc", "cap") is None
+
+    # ...and the top-level resolver then falls back to the static ACE config.
+    base, _endpoints = discovery.discover_ace_endpoints("rpc")
+    assert base == discovery.ACE_API_BASE
+
+
+def test_build_proof_manifest_matches_briefs(tmp_path):
+    """proof.json must mirror the committed feed: one card per brief, each
+    naming its trigger signature and an artifact hash that equals both the
+    brief's sidecar and a fresh sha256(png || md) on disk — so the manifest is
+    derived from the real artifacts, never asserted independently."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from onchainbrief.proof import AGENT_PDA, build_proof
+
+    briefs = Path(__file__).resolve().parents[1] / "briefs"
+    mds = sorted(briefs.glob("*.md"))
+    if not mds:
+        import pytest
+        pytest.skip("no committed briefs to build a proof manifest from")
+
+    out = build_proof(briefs, tmp_path / "proof.json")
+    manifest = json.loads(out.read_text(encoding="utf-8"))
+
+    assert manifest["card_count"] == len(mds)
+    assert len(manifest["cards"]) == len(mds)
+    assert manifest["agent"]["agent_pda"] == AGENT_PDA
+    assert manifest["payments"]["network"] == "base"
+
+    for card in manifest["cards"]:
+        assert card["trigger_signature"], f"{card['id']} has no trigger sig"
+        want = card["artifact_sha256"]
+        if not want:
+            continue
+        png = briefs / card["card_image"]
+        md = briefs / card["brief_markdown"]
+        h = hashlib.sha256()
+        h.update(png.read_bytes())
+        h.update(md.read_bytes())
+        assert h.hexdigest() == want, f"{card['id']} artifact hash drift"
 
 
 def test_discovery_banner_redacts_rpc_key(monkeypatch, capsys):
@@ -1350,6 +1565,109 @@ def test_txfacts_deploy_and_swap_and_empty():
     # malformed / empty input must not raise
     assert extract_facts(None).kind == "activity"
     assert extract_facts({}).kind == "activity"
+
+
+def test_swap_notional_valued_by_stable_leg():
+    """A swap of a non-stable token must take its USD size from the stable leg,
+    not stay value-blind. USDC->MEME: headline asset is the memecoin (largest
+    token-count delta) but amount_usd is the 120k USDC that changed hands."""
+    from onchainbrief.txfacts import extract_facts
+
+    jup = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    meme = "MeMe1111111111111111111111111111111111111111"
+    swap = {
+        "meta": {
+            "err": None, "fee": 5000, "preBalances": [1, 1], "postBalances": [1, 1],
+            "preTokenBalances": [
+                {"owner": "T", "mint": usdc, "uiTokenAmount": {"uiAmount": 200000.0}},
+                {"owner": "T", "mint": meme, "uiTokenAmount": {"uiAmount": 0.0}},
+            ],
+            "postTokenBalances": [
+                {"owner": "T", "mint": usdc, "uiTokenAmount": {"uiAmount": 80000.0}},
+                {"owner": "T", "mint": meme, "uiTokenAmount": {"uiAmount": 5_000_000.0}},
+            ],
+            "logMessages": [f"Program {jup} invoke [1]",
+                            "Program log: Instruction: Route"],
+        },
+        "transaction": {"message": {"accountKeys": ["T", "x"]}},
+    }
+    f = extract_facts(swap)
+    assert f.kind == "swap"
+    assert f.asset.startswith("MeMe")           # headline token = the memecoin
+    assert abs(f.amount_usd - 120000.0) < 1.0   # but valued by the USDC leg
+
+
+def test_significance_gate_keeps_big_and_notable_drops_water():
+    import types
+
+    from onchainbrief.filter import (
+        MIN_BRIEF_USD, is_significant, significance_score,
+    )
+    from onchainbrief.txfacts import EventFacts
+
+    def ev(**kw):
+        return types.SimpleNamespace(facts=EventFacts(**kw))
+
+    # value-moves: only above the bar
+    assert is_significant(ev(kind="swap", amount_usd=MIN_BRIEF_USD * 2))
+    assert not is_significant(ev(kind="swap", amount_usd=MIN_BRIEF_USD * 0.5))
+    assert not is_significant(ev(kind="swap", amount_usd=None))
+    assert not is_significant(ev(kind="token_transfer", amount_usd=10.0))
+    # bigger swap outranks a smaller one
+    assert significance_score(ev(kind="swap", amount_usd=MIN_BRIEF_USD * 5)) > \
+        significance_score(ev(kind="swap", amount_usd=MIN_BRIEF_USD * 2))
+    # notable-by-nature kinds keep regardless of dollar size
+    assert is_significant(ev(kind="security"))
+    assert is_significant(ev(kind="governance"))
+    assert is_significant(ev(kind="deploy", program_name="Jupiter Aggregator"))
+    assert is_significant(ev(kind="deploy", deploy_verb="upgraded"))
+    # anonymous deploy (no program/verb) and routine activity are water
+    assert not is_significant(ev(kind="deploy"))
+    assert not is_significant(ev(kind="activity"))
+    # missing facts never crashes, never passes
+    assert not is_significant(types.SimpleNamespace(facts=None))
+
+
+def test_watch_config_env_toggles_and_json_override(monkeypatch, tmp_path):
+    """Operator can retune WHAT the agent briefs without touching code: env
+    switches turn event types off, and a .state/watch_config.json override
+    (what the operator panel writes) wins over env and takes effect live."""
+    import types
+
+    from onchainbrief import filter as flt
+    from onchainbrief.txfacts import EventFacts
+
+    def ev(**kw):
+        return types.SimpleNamespace(facts=EventFacts(**kw))
+
+    cfg_file = tmp_path / "watch_config.json"
+    monkeypatch.setattr(flt, "WATCH_CONFIG_PATH", str(cfg_file))
+
+    # No env, no file -> built-in defaults: security watched, $10k bar.
+    for v in ("MIN_BRIEF_USD", "WATCH_SECURITY", "WATCH_GOVERNANCE", "WATCH_DEPLOYS"):
+        monkeypatch.delenv(v, raising=False)
+    assert flt.is_significant(ev(kind="security"))
+    assert flt.watch_config()["min_usd"] == 10_000.0
+
+    # Env switch turns security off -> a security event is no longer briefed.
+    monkeypatch.setenv("WATCH_SECURITY", "false")
+    assert not flt.is_significant(ev(kind="security"))
+    assert flt.is_significant(ev(kind="governance"))  # others unaffected
+
+    # JSON override (operator panel) beats env: re-enable security + raise bar.
+    cfg_file.write_text(
+        '{"security": true, "min_usd": 250000}', encoding="utf-8"
+    )
+    assert flt.is_significant(ev(kind="security"))
+    assert flt.watch_config()["min_usd"] == 250_000.0
+    # the raised bar applies to value-moves immediately
+    assert not flt.is_significant(ev(kind="swap", amount_usd=200_000))
+    assert flt.is_significant(ev(kind="swap", amount_usd=300_000))
+
+    # Malformed JSON is ignored, never crashes -> falls back to env/defaults.
+    cfg_file.write_text("{not json", encoding="utf-8")
+    assert flt.watch_config()["min_usd"] == 10_000.0
 
 
 def test_deploy_via_cpi_names_upgraded_program_not_executor():
@@ -1838,3 +2156,67 @@ def test_feed_rpc_hosts_are_covered_by_csp():
         p = urlsplit(url)
         origin = f"{p.scheme}://{p.netloc}"
         assert origin in connect_src, f"{origin} missing from CSP connect-src"
+
+
+def test_operator_config_validation_and_persistence(tmp_path, monkeypatch):
+    """The operator panel write-path: validate input, persist it, and have the
+    agent's live watch_config() pick it up. Also covers the token gate's
+    fail-closed default (no OPERATOR_TOKEN => no write endpoint)."""
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root / "scripts") not in sys.path:
+        sys.path.insert(0, str(root / "scripts"))
+    import serve_feed
+    import onchainbrief.filter as flt
+
+    cfg_path = tmp_path / "watch_config.json"
+    # Both the writer (serve_feed) and the reader (filter) must point at the file.
+    monkeypatch.setattr(serve_feed, "WATCH_CONFIG_PATH", str(cfg_path))
+    monkeypatch.setattr(flt, "WATCH_CONFIG_PATH", str(cfg_path))
+    # Clean env so filter defaults are deterministic.
+    for var in ("MIN_BRIEF_USD", "WATCH_DEPLOYS", "WATCH_GOVERNANCE", "WATCH_SECURITY"):
+        monkeypatch.delenv(var, raising=False)
+
+    # Validation: good payload survives, junk is rejected.
+    patch, err = serve_feed._validate_operator_config(
+        {"min_usd": 50000, "deploys": True, "governance": False, "security": True}
+    )
+    assert err == "" and patch == {
+        "min_usd": 50000.0, "deploys": True, "governance": False, "security": True
+    }
+    assert serve_feed._validate_operator_config({"min_usd": float("nan")})[0] is None
+    assert serve_feed._validate_operator_config({"min_usd": -1})[0] is None
+    assert serve_feed._validate_operator_config({"min_usd": 1e15})[0] is None
+    assert serve_feed._validate_operator_config({"unknown": 1})[0] is None
+
+    # Persist and confirm the agent reads it live.
+    serve_feed._write_watch_config(patch)
+    live = flt.watch_config()
+    assert live["min_usd"] == 50000.0
+    assert live["governance"] is False
+    assert live["deploys"] is True
+
+    # A second partial write merges, it does not clobber prior keys.
+    serve_feed._write_watch_config({"min_usd": 250000.0})
+    live2 = flt.watch_config()
+    assert live2["min_usd"] == 250000.0
+    assert live2["governance"] is False  # preserved from the first write
+
+    # Fail-closed: with no token configured, the gate denies.
+    monkeypatch.setattr(serve_feed, "OPERATOR_TOKEN", "")
+
+    class _FakeHandler:
+        headers = {"X-Operator-Token": "anything"}
+        path = "/operator/config"
+        _check_operator_token = serve_feed.CustomFeedHandler._check_operator_token
+
+    assert _FakeHandler()._check_operator_token() is False
+
+    # With a token set, only the exact value passes (constant-time compare).
+    monkeypatch.setattr(serve_feed, "OPERATOR_TOKEN", "sekret")
+    _FakeHandler.headers = {"X-Operator-Token": "sekret"}
+    assert _FakeHandler()._check_operator_token() is True
+    _FakeHandler.headers = {"X-Operator-Token": "wrong"}
+    assert _FakeHandler()._check_operator_token() is False

@@ -9,7 +9,9 @@ testable offline.
 
 from __future__ import annotations
 
+import json
 import os
+import pathlib
 
 import requests
 
@@ -79,6 +81,118 @@ _KIND_TO_CATEGORY = {
     "security": "Security",
     "governance": "Governance",
 }
+
+
+# --- Significance gate (runs on ENRICHED facts, after enrich_event) ---------
+# is_brief_worthy above is a cheap, fact-blind first pass (LLM/heuristic) that
+# avoids decoding obvious noise. This is the hard editorial bar: it sees the
+# decoded amount/kind, so it can say "a $0.11 swap is not worth a brief" - the
+# decision the old pre-enrich gate could never make.
+#
+# Every knob here is operator-configurable so whoever self-hosts the agent can
+# point it at THEIR wallet (env keys, see config.py) and tune WHAT it briefs
+# without touching code: the dollar bar plus on/off switches for the three
+# value-independent event types. Resolution order, low to high precedence:
+#   built-in defaults  <  environment (.env)  <  .state/watch_config.json
+# The JSON layer is what the local operator panel writes, so a setting change
+# takes effect on the next event without a redeploy.
+
+# Defaults a fresh clone runs with. $10k swap bar; all event types watched.
+# $10k is the floor for a swap/transfer to be "meaningful volume" - high enough
+# to drop sub-$1 dust and small retail trades, low enough that the Volume tab is
+# actually populatable (a $100k bar surfaced zero reachable swaps). Operators
+# raise or lower it per their wallet via MIN_BRIEF_USD / the operator panel.
+_DEFAULT_MIN_BRIEF_USD = 10_000.0
+_VALUE_MOVE_KINDS = {"swap", "token_transfer", "whale_transfer"}
+# Event kinds notable by their NATURE, not their dollar size: a freeze/
+# setAuthority, a governance proposal action, or a real protocol deploy/upgrade
+# is news even at $0 of value moved. Each maps to the env/JSON switch that
+# turns its watching on or off; pure value-moves always need to clear the bar.
+_NATURE_KINDS = {
+    "security": "security",
+    "governance": "governance",
+    "deploy": "deploys",
+}
+
+# Where the operator panel persists live overrides (see serve_feed.py). Env so a
+# read-only deploy can relocate it onto a writable volume.
+WATCH_CONFIG_PATH = os.getenv("WATCH_CONFIG_PATH", ".state/watch_config.json")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def watch_config() -> dict:
+    """The agent's current watch parameters, freshly resolved on every call.
+
+    Read live (not cached at import) so the operator panel writing
+    `.state/watch_config.json` retunes the running agent without a restart.
+    Keys: min_usd (float), deploys/governance/security (bool).
+    """
+    cfg = {
+        "min_usd": float(os.getenv("MIN_BRIEF_USD", str(_DEFAULT_MIN_BRIEF_USD))),
+        "deploys": _env_bool("WATCH_DEPLOYS", True),
+        "governance": _env_bool("WATCH_GOVERNANCE", True),
+        "security": _env_bool("WATCH_SECURITY", True),
+    }
+    try:
+        override = json.loads(
+            pathlib.Path(WATCH_CONFIG_PATH).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return cfg  # no file / unreadable / bad JSON -> env defaults stand
+    if isinstance(override, dict):
+        if "min_usd" in override:
+            try:
+                cfg["min_usd"] = float(override["min_usd"])
+            except (TypeError, ValueError):
+                pass
+        for key in ("deploys", "governance", "security"):
+            if key in override:
+                cfg[key] = bool(override[key])
+    return cfg
+
+
+# Back-compat: some callers/tests import MIN_BRIEF_USD as the bar. It reflects
+# the env/default at import; the live bar comes from watch_config()["min_usd"].
+MIN_BRIEF_USD = float(os.getenv("MIN_BRIEF_USD", str(_DEFAULT_MIN_BRIEF_USD)))
+
+
+def significance_score(ev: LogEvent) -> float:
+    """0 = drop. Higher = more worth a brief. Ranks the curated feed too."""
+    facts = getattr(ev, "facts", None)
+    if facts is None:
+        return 0.0
+    cfg = watch_config()
+    min_usd = cfg["min_usd"] or _DEFAULT_MIN_BRIEF_USD
+    kind = getattr(facts, "kind", "activity")
+    usd = getattr(facts, "amount_usd", None) or 0.0
+    nature_switch = _NATURE_KINDS.get(kind)
+    if nature_switch is not None:
+        if not cfg.get(nature_switch, True):
+            return 0.0  # operator turned this event type off
+        # A deploy must name a real program / verb; an anonymous spam loader
+        # with no resolved program is not news.
+        if kind == "deploy" and not (
+            getattr(facts, "program_name", "") or getattr(facts, "deploy_verb", "")
+        ):
+            return 0.0
+        # Base 1.0 keeps these above the drop line; a dollar figure (e.g. a
+        # governed treasury move) nudges them up without dwarfing real whales.
+        return 1.0 + min(usd, min_usd) / min_usd
+    if kind in _VALUE_MOVE_KINDS:
+        return usd / min_usd if usd >= min_usd else 0.0
+    # activity / unknown: the "water" the feed used to fill up with.
+    return 0.0
+
+
+def is_significant(ev: LogEvent) -> bool:
+    """The hard gate: only events above the editorial bar reach the paid pipeline."""
+    return significance_score(ev) > 0.0
 
 
 def categorize_event(ev: LogEvent) -> str:

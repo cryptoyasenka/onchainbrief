@@ -35,15 +35,17 @@ ALLOW = [
 # Substrings that must never reach the public tree (case-insensitive).
 # Base64-encoded so this tool — itself in the public allowlist — does not
 # leak the very terms it guards against (the gate would flag itself).
-# Mix of internal project names/handles and a credential tripwire. The last
+# Mix of internal project codenames/handles, the operator's personal first
+# name, and a credential tripwire. The personal-name entry catches a stray
+# "<name>'s call"-style aside leaking into an allowlisted script; the last
 # entry decodes to the OOBE/Stripe-style live secret-key prefix, catching such
-# a key accidentally pasted into an allowlisted source/script file. The prefix
-# is kept base64-only here too — writing it in plaintext would make this gate
+# a key accidentally pasted into an allowlisted source/script file. Every term
+# is kept base64-only here too — writing one in plaintext would make this gate
 # flag itself (scripts/ is in the allowlist).
 DENY = [
     base64.b64decode(b).decode()
     for b in ("Y3VzdG9z", "Ym9vemVsZWU=", "aHVhbmd6ZXNlbg==", "MWFybGV5c29s",
-              "c2tfbGl2ZQ==")
+              "eWFuYQ==", "c2tfbGl2ZQ==")
 ]
 SKIP_DIRS = {"__pycache__", ".state", "briefs", "site", "demo-out",
              ".pytest_cache", ".public-build", ".git", ".planning",

@@ -8,6 +8,7 @@ and starts the background log watcher for fully autonomous operation.
 from __future__ import annotations
 
 import contextlib
+import hmac
 import json
 import os
 import pathlib
@@ -18,6 +19,7 @@ import threading
 import time
 import http.server
 import socketserver
+from urllib.parse import urlsplit, parse_qs
 import requests
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -33,6 +35,7 @@ from onchainbrief.config import (  # noqa: E402
     TARGET_TX_RPC_URL,
 )
 from onchainbrief.watcher import LogEvent  # noqa: E402
+from onchainbrief.filter import watch_config, WATCH_CONFIG_PATH  # noqa: E402
 
 
 def _rpc_origin(url: str) -> str:
@@ -81,6 +84,13 @@ PAYMENTS_LEDGER_PATH = pathlib.Path(
     os.getenv("PAYMENTS_LEDGER_PATH", ".state/payments.json")
 )
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "")
+# Local operator panel. The watch-config write endpoint is gated by this shared
+# secret. EMPTY = panel fully disabled (every /operator route 404s). This is the
+# safety default: the server binds 0.0.0.0 on Railway, so a public deploy must
+# never expose a write endpoint unless the host explicitly sets OPERATOR_TOKEN.
+OPERATOR_TOKEN = os.getenv("OPERATOR_TOKEN", "").strip()
+# Hard ceiling so a fat-fingered or hostile min_usd can't be set to absurd values.
+OPERATOR_MAX_MIN_USD = 1e12
 BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,100}$")
 MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 _B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -459,6 +469,103 @@ def verify_and_trigger_brief(
     return True, "Payment verified. Brief analysis queued.", 200
 
 
+def _validate_operator_config(data: dict) -> tuple[dict | None, str]:
+    """Coerce/validate an operator panel payload into a watch-config patch.
+
+    Only known keys survive; unknown keys are ignored. Returns (patch, "") on
+    success or (None, reason) on rejection. min_usd must be a finite, in-range
+    number; the three switches are coerced to bool.
+    """
+    if not isinstance(data, dict):
+        return None, "Body must be a JSON object"
+    patch: dict = {}
+    if "min_usd" in data:
+        try:
+            m = float(data["min_usd"])
+        except (TypeError, ValueError):
+            return None, "min_usd must be a number"
+        if m != m or m < 0 or m > OPERATOR_MAX_MIN_USD:  # NaN or out of range
+            return None, "min_usd out of range"
+        patch["min_usd"] = m
+    for key in ("deploys", "governance", "security"):
+        if key in data:
+            patch[key] = bool(data[key])
+    if not patch:
+        return None, "No recognized settings in body"
+    return patch, ""
+
+
+def _write_watch_config(patch: dict) -> dict:
+    """Merge `patch` into the on-disk watch-config override and persist it
+    atomically. Returns the full override dict now on disk. The agent reads this
+    file live (filter.watch_config), so the change applies without a restart."""
+    path = pathlib.Path(WATCH_CONFIG_PATH)
+    current: dict = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                current = loaded
+        except (OSError, ValueError):
+            current = {}
+    current.update(patch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(current, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+    return current
+
+
+def _operator_page_html(token: str, cfg: dict) -> str:
+    """Minimal local control panel. Served only to a request that already proved
+    the token, so embedding it for the POST is safe. No external assets."""
+    min_usd = int(cfg.get("min_usd") or 0)
+    checked = {k: "checked" if cfg.get(k, True) else "" for k in ("deploys", "governance", "security")}
+    tok = json.dumps(token)  # safe JS string literal
+    return (
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>OnchainBrief — Operator</title><style>"
+        "body{font-family:system-ui,sans-serif;background:#030712;color:#f3f4f6;"
+        "max-width:480px;margin:40px auto;padding:0 20px}"
+        "h1{font-size:20px}label{display:block;margin:16px 0 6px;font-size:13px;color:#9ca3af}"
+        "input[type=number]{width:100%;padding:10px;border-radius:8px;border:1px solid #333;"
+        "background:#0b1220;color:#fff;font-size:15px}"
+        ".row{display:flex;align-items:center;gap:8px;margin:10px 0}"
+        "button{margin-top:20px;width:100%;padding:12px;border:0;border-radius:8px;"
+        "background:#8b5cf6;color:#fff;font-weight:600;font-size:14px;cursor:pointer}"
+        "#msg{margin-top:14px;font-size:13px;min-height:18px}"
+        ".muted{color:#9ca3af;font-size:12px;line-height:1.5}</style></head><body>"
+        "<h1>Agent watch settings</h1>"
+        "<p class=muted>Local operator panel. Changes are written to the agent's "
+        "live config and take effect on the next event — no restart.</p>"
+        "<label for=min_usd>Minimum swap/transfer size (USD)</label>"
+        f"<input type=number id=min_usd min=0 step=1 value='{min_usd}'>"
+        f"<div class=row><input type=checkbox id=deploys {checked['deploys']}>"
+        "<label for=deploys style='margin:0'>Watch program deploys / upgrades</label></div>"
+        f"<div class=row><input type=checkbox id=governance {checked['governance']}>"
+        "<label for=governance style='margin:0'>Watch governance actions</label></div>"
+        f"<div class=row><input type=checkbox id=security {checked['security']}>"
+        "<label for=security style='margin:0'>Watch security / admin actions</label></div>"
+        "<button id=save>Save</button><div id=msg></div>"
+        "<script>"
+        f"const TOKEN={tok};"
+        "document.getElementById('save').onclick=async()=>{"
+        "const body={min_usd:parseFloat(document.getElementById('min_usd').value)||0,"
+        "deploys:document.getElementById('deploys').checked,"
+        "governance:document.getElementById('governance').checked,"
+        "security:document.getElementById('security').checked};"
+        "const m=document.getElementById('msg');m.textContent='Saving…';m.style.color='#9ca3af';"
+        "try{const r=await fetch('/operator/config',{method:'POST',"
+        "headers:{'Content-Type':'application/json','X-Operator-Token':TOKEN},"
+        "body:JSON.stringify(body)});const j=await r.json();"
+        "if(r.ok){m.textContent='Saved. Live config updated.';m.style.color='#34d399';}"
+        "else{m.textContent=j.error||'Error';m.style.color='#f87171';}"
+        "}catch(e){m.textContent=String(e);m.style.color='#f87171';}};"
+        "</script></body></html>"
+    )
+
+
 class CustomFeedHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -471,9 +578,23 @@ class CustomFeedHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Security-Policy", build_csp())
         super().end_headers()
 
+    def _check_operator_token(self) -> bool:
+        """Constant-time match of the supplied token against OPERATOR_TOKEN.
+        Accepts an X-Operator-Token header (POST) or ?token= query (GET page)."""
+        if not OPERATOR_TOKEN:
+            return False
+        supplied = self.headers.get("X-Operator-Token", "")
+        if not supplied:
+            qs = parse_qs(urlsplit(self.path).query)
+            supplied = (qs.get("token") or [""])[0]
+        return hmac.compare_digest(supplied, OPERATOR_TOKEN)
+
     def do_GET(self):
+        path = urlsplit(self.path).path
         if self.path == "/api/sse":
             self.handle_sse()
+        elif path == "/operator":
+            self.handle_operator_page()
         else:
             super().do_GET()
 
@@ -494,8 +615,66 @@ class CustomFeedHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/request-brief":
             self.handle_request_brief()
+        elif self.path == "/operator/config":
+            self.handle_operator_config()
         else:
             self.send_error(404, "Not Found")
+
+    def handle_operator_page(self):
+        # Disabled feature is invisible: 404, not 401, so a public deploy reveals
+        # nothing about an operator panel that the host never enabled.
+        if not OPERATOR_TOKEN:
+            self.send_error(404, "Not Found")
+            return
+        if not self._check_operator_token():
+            self.send_error(401, "Unauthorized")
+            return
+        page = _operator_page_html(OPERATOR_TOKEN, watch_config()).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(page)))
+        self.end_headers()
+        self.wfile.write(page)
+
+    def handle_operator_config(self):
+        if not OPERATOR_TOKEN:
+            self.send_error(404, "Not Found")
+            return
+        if not self._check_operator_token():
+            self.send_json_error("Unauthorized", 401)
+            return
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not _rate_allowed(client_ip):
+            self.send_json_error("Rate limit exceeded", 429)
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.send_json_error("Content-Length is required", 411)
+            return
+        if content_length <= 0:
+            self.send_json_error("Request body is required", 400)
+            return
+        if content_length > MAX_REQUEST_BYTES:
+            self.send_json_error("Request body too large", 413)
+            return
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            self.send_json_error("Invalid JSON body", 400)
+            return
+        patch, reason = _validate_operator_config(data)
+        if patch is None:
+            self.send_json_error(reason, 400)
+            return
+        try:
+            _write_watch_config(patch)
+        except OSError as e:
+            self.send_json_error(f"Could not persist config: {e}", 500)
+            return
+        # Echo the effective config (env + the override just written).
+        self.send_json_response({"status": "ok", "config": watch_config()})
 
     def _send_cors_headers(self):
         if ALLOWED_ORIGIN:
@@ -619,6 +798,11 @@ def main() -> int:
             )
     else:
         print("[SERVER] Paid requests disabled: AGENT_PAYMENT_WALLET is not configured")
+
+    if OPERATOR_TOKEN:
+        print(f"[SERVER] Operator panel ENABLED at /operator (token-gated, writes {WATCH_CONFIG_PATH})")
+    else:
+        print("[SERVER] Operator panel disabled: set OPERATOR_TOKEN to enable /operator")
 
     # 1. Background Solana log watcher if WATCH_PROGRAM_IDS is defined
     watch_programs = os.getenv("WATCH_PROGRAM_IDS", "")

@@ -78,53 +78,60 @@ def fetch_recent_sigs(program: str, limit: int) -> list[str]:
 
 
 def select_diverse_events(sol_price: float | None) -> list[LogEvent]:
-    """Greedily pick decoded events spanning as many categories as possible."""
-    chosen: list[LogEvent] = []
-    seen_cats: set[str] = set()
-    seen_sigs: set[str] = set()
+    """Pick the most SIGNIFICANT decoded events, spread across categories.
 
-    # Pass 1: one event per source that lands in a brand-new category.
-    pending: list[LogEvent] = []
+    Significance, not category diversity, is the primary key now: the old greedy
+    fill took the FIRST event landing in a new tab, so a $0.11 swap could headline
+    the Volume tab. Here every candidate is scored (filter.significance_score) and
+    sub-bar events are dropped outright; the feed then leads with the biggest
+    event but still lights distinct tabs before doubling up a category.
+    """
+    from onchainbrief.filter import is_significant, significance_score
+
+    candidates: list[LogEvent] = []
+    seen_sigs: set[str] = set()
     for label, addr in SOURCES:
         sigs = fetch_recent_sigs(addr, SIGS_PER_SOURCE)
         print(f"[SCAN] {label}: {len(sigs)} sigs")
-        picked_here = False
         for sig in sigs:
             if sig in seen_sigs:
                 continue
+            seen_sigs.add(sig)
             ev = LogEvent(signature=sig, logs=[], program_ids=[addr])
             enrich_event(ev, MAINNET_RPC, tx_rpc_url=DECODE_RPC, sol_price_usd=sol_price)
-            cat = categorize_event(ev)
-            kind = getattr(getattr(ev, "facts", None), "kind", "?")
-            if not picked_here and cat not in seen_cats:
-                chosen.append(ev)
-                seen_cats.add(cat)
-                seen_sigs.add(sig)
-                picked_here = True
-                print(f"  + {sig[:12]}… kind={kind} -> {cat} (new tab)")
-                if len(chosen) >= DEMO_BRIEFS:
-                    return chosen
-            else:
-                pending.append(ev)
-                seen_sigs.add(sig)
+            f = getattr(ev, "facts", None)
+            kind = getattr(f, "kind", "?")
+            usd = getattr(f, "amount_usd", None)
+            if is_significant(ev):
+                candidates.append(ev)
+                print(f"  ? {sig[:12]}… kind={kind} usd={usd} score={significance_score(ev):.2f} (eligible)")
 
-    # Pass 2: backfill toward DEMO_BRIEFS, but spread across categories instead
-    # of taking list order — otherwise a prolific source (the loader emits many
-    # deploys) floods the feed with near-identical cards, the very repetition
-    # this rewrite set out to kill.
-    from collections import Counter
+    candidates.sort(key=significance_score, reverse=True)
+    chosen: list[LogEvent] = []
+    chosen_sigs: set[str] = set()
+    seen_cats: set[str] = set()
 
-    cat_counts = Counter(categorize_event(c) for c in chosen)
-    chosen_sigs = {c.signature for c in chosen}
-    remaining = [e for e in pending if e.signature not in chosen_sigs]
-    while remaining and len(chosen) < DEMO_BRIEFS:
-        # Pick the pending event whose category is currently least represented.
-        ev = min(remaining, key=lambda e: cat_counts[categorize_event(e)])
-        remaining.remove(ev)
+    # Pass 1: lead with the highest score in each fresh category.
+    for ev in candidates:
         cat = categorize_event(ev)
-        cat_counts[cat] += 1
+        if cat in seen_cats:
+            continue
         chosen.append(ev)
-        print(f"  + {ev.signature[:12]}… -> {cat} (backfill)")
+        chosen_sigs.add(ev.signature)
+        seen_cats.add(cat)
+        print(f"  + {ev.signature[:12]}… -> {cat} score={significance_score(ev):.2f} (top of tab)")
+        if len(chosen) >= DEMO_BRIEFS:
+            return chosen
+
+    # Pass 2: fill remaining slots with the next-highest scorers regardless of tab.
+    for ev in candidates:
+        if ev.signature in chosen_sigs:
+            continue
+        chosen.append(ev)
+        chosen_sigs.add(ev.signature)
+        print(f"  + {ev.signature[:12]}… -> {categorize_event(ev)} score={significance_score(ev):.2f} (backfill)")
+        if len(chosen) >= DEMO_BRIEFS:
+            break
     return chosen
 
 

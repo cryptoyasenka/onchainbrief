@@ -23,16 +23,21 @@ SAP_PROGRAM_ID = Pubkey.from_string("SAPpUhsWLJG1FfkGRcXagEDMrMsWGjbky7AyhGpFETZ
 
 # Discovery trust controls. The registry is permissionless — anyone can
 # register an agent under a capability id — so resolving "the first agent" is
-# only as trustworthy as the registry. These optional pins constrain what a
-# discovered endpoint is allowed to be before we route paid x402 calls to it:
+# only as trustworthy as the registry. These pins constrain what a discovered
+# endpoint is allowed to be before we route paid x402 calls to it:
 #   - SAP_EXPECTED_AGENT_PDA : require this exact agent PDA among the registered
-#     providers (else reject and fall back to the static ACE base).
+#     providers (else reject and fall back to the static ACE base). Empty =
+#     accept the first provider (a warning is logged).
 #   - SAP_ALLOWED_API_BASES  : comma-separated allowlist of acceptable inferred
-#     base URLs (else reject). Empty = no host restriction.
+#     base URLs. DEFAULTS to the known ACE base when unset — so even an unpinned
+#     deploy can't be steered into routing paid calls at an arbitrary host a
+#     registry squatter chose; a foreign base is rejected and we fall back to
+#     the static ACE config (which is byte-identical to the value a correctly
+#     registered ACE agent resolves to). Set it explicitly to widen the hosts.
 SAP_EXPECTED_AGENT_PDA = os.getenv("SAP_EXPECTED_AGENT_PDA", "").strip()
 SAP_ALLOWED_API_BASES = [
     b.strip() for b in os.getenv("SAP_ALLOWED_API_BASES", "").split(",") if b.strip()
-]
+] or [ACE_API_BASE]
 
 _log = logging.getLogger(__name__)
 

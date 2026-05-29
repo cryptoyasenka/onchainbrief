@@ -1,6 +1,6 @@
 {
-  "tx_sig": "53BGewDaTHM3qxcj3zwfoVURRw3BNn2mM1kNwfqJrEoU7ydsPqTdGZHJBwdQ1DcU192efpzA5Ep88QBca1HtQohz",
+  "tx_sig": "4hTwDyis3yRbqfjDz3bdKPKar8MtVsERgR5zbwbmix4HP1RAMfbwQ6SAK1ERRoGTXcRxV8QdSdWDtgC4aWtceziU",
   "cluster": "mainnet-beta",
-  "memo_payload_sha256": "23693a2101e5fdb06e2c8e458a49c793ddc7b08b33c1dd86359ba3fadc99d0ba",
-  "artifact_sha256": "b105015cb206b7e072ad40993e9a58d295d6494c8612fd1aff84e9333620d2f6"
+  "memo_payload_sha256": "ba28dd4f37e69eaacc13fa74bc543997c5668874d5d78e19f9a610214c413390",
+  "artifact_sha256": "94b1c2cd638ce67bc9456f415ec319e17d9a73b49dee4d4d3b7b610e15b06baa"
 }

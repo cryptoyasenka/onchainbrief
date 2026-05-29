@@ -18,10 +18,16 @@ import requests
 
 LAMPORTS_PER_SOL = 1_000_000_000
 
-# Mints whose UI amount is, by definition, the USD figure.
+# Mints whose UI amount is, by definition, the USD figure (1:1 USD pegs).
+# Used both to label the asset and to read a swap's dollar notional off its
+# stable leg. ONLY verified, genuinely $1-pegged mints belong here: a mislabeled
+# volatile token would massively over-value a trade and poison an immutable
+# on-chain attestation. USDS/PYUSD addresses verified against Sky & PayPal docs.
 STABLECOINS = {
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT",
+    "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA": "USDS",   # Sky Dollar
+    "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": "PYUSD",  # PayPal USD
 }
 WRAPPED_SOL = "So11111111111111111111111111111111111111112"
 
@@ -276,6 +282,71 @@ def _sol_move(result: dict, keys: list[str]) -> tuple[float, str, str] | None:
     return amount, keys[send_i], keys[recv_i]
 
 
+def _ui_amount(b: dict) -> float:
+    # uiAmount is the convenient float, but Solana RPC returns it null for
+    # some mints/encodings - fall back to the string form, then to the raw
+    # integer amount scaled by decimals, before giving up on the move.
+    t = b.get("uiTokenAmount") or {}
+    ui = t.get("uiAmount")
+    if ui is not None:
+        return float(ui)
+    s = t.get("uiAmountString")
+    if s:
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            pass
+    raw, dec = t.get("amount"), t.get("decimals")
+    if raw is not None and dec is not None:
+        try:
+            return float(int(raw)) / (10 ** int(dec))
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
+def _token_deltas(result: dict) -> dict[tuple[str, str], float]:
+    """Net (owner, mint) -> ui_amount delta across pre/post token balances."""
+    meta = result.get("meta", {}) or {}
+    bal: dict[tuple[str, str], float] = {}
+    for b in meta.get("preTokenBalances") or []:
+        key = (b.get("owner", ""), b.get("mint", ""))
+        bal[key] = bal.get(key, 0.0) - _ui_amount(b)
+    for b in meta.get("postTokenBalances") or []:
+        key = (b.get("owner", ""), b.get("mint", ""))
+        bal[key] = bal.get(key, 0.0) + _ui_amount(b)
+    return bal
+
+
+def _swap_notional_usd(
+    result: dict, keys: list[str], sol_price_usd: float | None
+) -> float | None:
+    """USD notional of a trade, read from its stablecoin / SOL leg.
+
+    A swap USDC->BONK carries no USD on the BONK leg, but the USDC (or wrapped/
+    native SOL) leg IS the dollar size that changed hands. Take the largest
+    absolute stablecoin delta, else the largest wrapped-SOL delta x price, else
+    the native SOL move x price. Deterministic - no price oracle for the exotic
+    token needed, so a $100k memecoin swap stops being invisible to the gate.
+    """
+    best: float | None = None
+    for (_owner, mint), delta in _token_deltas(result).items():
+        usd: float | None = None
+        if mint in STABLECOINS:
+            usd = abs(delta)
+        elif mint == WRAPPED_SOL and sol_price_usd:
+            usd = abs(delta) * sol_price_usd
+        if usd is not None and (best is None or usd > best):
+            best = usd
+    if sol_price_usd:
+        sol = _sol_move(result, keys)
+        if sol and sol[0] > 0:
+            usd = sol[0] * sol_price_usd
+            if best is None or usd > best:
+                best = usd
+    return best
+
+
 def _token_move(result: dict) -> tuple[float, str, str, str] | None:
     """Largest SPL move: (ui_amount, mint, from_owner, to_owner)."""
     meta = result.get("meta", {}) or {}
@@ -284,35 +355,7 @@ def _token_move(result: dict) -> tuple[float, str, str, str] | None:
     if not post and not pre:
         return None
 
-    def _amt(b: dict) -> float:
-        # uiAmount is the convenient float, but Solana RPC returns it null for
-        # some mints/encodings - fall back to the string form, then to the raw
-        # integer amount scaled by decimals, before giving up on the move.
-        t = b.get("uiTokenAmount") or {}
-        ui = t.get("uiAmount")
-        if ui is not None:
-            return float(ui)
-        s = t.get("uiAmountString")
-        if s:
-            try:
-                return float(s)
-            except (TypeError, ValueError):
-                pass
-        raw, dec = t.get("amount"), t.get("decimals")
-        if raw is not None and dec is not None:
-            try:
-                return float(int(raw)) / (10 ** int(dec))
-            except (TypeError, ValueError):
-                pass
-        return 0.0
-
-    bal: dict[tuple[str, str], float] = {}  # (owner, mint) -> delta
-    for b in pre:
-        key = (b.get("owner", ""), b.get("mint", ""))
-        bal[key] = bal.get(key, 0.0) - _amt(b)
-    for b in post:
-        key = (b.get("owner", ""), b.get("mint", ""))
-        bal[key] = bal.get(key, 0.0) + _amt(b)
+    bal = _token_deltas(result)
     if not bal:
         return None
     (recv_owner, mint), amount = max(bal.items(), key=lambda kv: kv[1])
@@ -390,6 +433,11 @@ def extract_facts(result: dict, *, sol_price_usd: float | None = None) -> EventF
             facts.amount_usd = amount
         elif mint == WRAPPED_SOL and sol_price_usd:
             facts.amount_usd = amount * sol_price_usd
+        else:
+            # Non-stable token (memecoin, etc.) has no direct USD. Value the
+            # whole trade by its stablecoin / SOL leg so the dollar size of a
+            # big swap is visible to the significance gate, not just to stables.
+            facts.amount_usd = _swap_notional_usd(result, keys, sol_price_usd)
         verb = "routed" if is_swap else "moved"
         facts.kind = "swap" if is_swap else "token_transfer"
         usd = f" ({_fmt_usd(facts.amount_usd)})" if facts.amount_usd else ""

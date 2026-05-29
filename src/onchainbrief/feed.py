@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import shutil
 from dataclasses import dataclass
@@ -23,8 +24,14 @@ from .config import (
     REQUEST_BRIEF_LAMPORTS,
     lamports_to_sol_str,
 )
+from .filter import watch_config
 
 _CARD_RE = re.compile(r"!\[card\]\((.+?)\)")
+# The brief narrative emits the decoded dollar size of a value-move as
+# "(~$N USD)". That parenthetical is the single source the client-side amount
+# slider reads (via the card's data-usd attribute). Nature events
+# (deploy/governance/security) carry no such figure and are never amount-filtered.
+_USD_RE = re.compile(r"~\$([\d,]+(?:\.\d+)?)\s*USD")
 _SIG_RE = re.compile(r"Solana tx `([^`]+)`")
 _ATTEST_RE = re.compile(r"Attestation tx `([^`]+)` \(([^)]+)\)")
 _SRC_RE = re.compile(r"^- (\S+)", re.MULTILINE)
@@ -46,6 +53,12 @@ _HEADLINE_TITLE_WORDS = {
     "SOLANA": "Solana",
 }
 
+# On-chain SAP agent identity (mirrors proof.AGENT_PDA / README). Used by the
+# proof-ladder's "agent on-chain" link. Kept as a local literal to avoid a
+# feed<->proof import cycle (proof.py imports _parse_brief from this module).
+_AGENT_PDA = "DsTZa5xY4sF8y3JFdE53B8T9xEsYtvntEUggm6FwMgVi"
+_AGENT_EXPLORER = f"https://explorer.solana.com/address/{_AGENT_PDA}"
+
 
 @dataclass
 class FeedItem:
@@ -58,6 +71,7 @@ class FeedItem:
     attest_sig: str = ""
     attest_cluster: str = ""
     md_name: str = ""
+    amount_usd: float = 0.0  # decoded value-move size; 0 = nature event (no $ figure)
 
 
 def _display_headline(headline: str) -> str:
@@ -95,6 +109,13 @@ def _parse_brief(md_path: Path) -> FeedItem | None:
     body = text.split("\n## Sources")[0]
     body = _CARD_RE.sub("", body).split(headline, 1)[-1]
     narrative = body.replace("#", "").strip()
+    usd_match = _USD_RE.search(text)
+    amount_usd = 0.0
+    if usd_match:
+        try:
+            amount_usd = float(usd_match.group(1).replace(",", ""))
+        except ValueError:
+            amount_usd = 0.0
     src_block = text.split("## Sources")[-1].split("## Provenance")[0]
     sources = [s for s in _SRC_RE.findall(src_block) if s.startswith("http")]
     # Attestation now lives in a sidecar so the published md stays byte-for-byte
@@ -120,6 +141,103 @@ def _parse_brief(md_path: Path) -> FeedItem | None:
         attest_sig=attest_sig,
         attest_cluster=attest_cluster,
         md_name=md_path.name,
+        amount_usd=amount_usd,
+    )
+
+
+def _watch_badge_html(present_cats: set[str] | None = None) -> str:
+    """Read-only banner: the agent's watch policy (what it is configured to brief on).
+
+    Sourced from filter.watch_config() (env defaults, overridden by the operator
+    panel's .state/watch_config.json). `present_cats` is the set of feed
+    categories that actually have briefs, so a watched type renders as live (✓)
+    vs. watched-but-quiet (·) instead of falsely implying content that isn't
+    there. Read-only here: the feed is a static artifact; only the panel writes.
+    """
+    cfg = watch_config()
+    present = {c.lower() for c in (present_cats or set())}
+    min_usd = cfg.get("min_usd") or 0.0
+    bar = f"${min_usd:,.0f}"
+
+    def pill(label: str, category: str, on: bool) -> str:
+        # off = operator disabled it; on+present = has briefs in this feed (✓);
+        # on+absent = watched but no qualifying event in this window (muted ·).
+        if not on:
+            return f"<span class='watch-pill off'>{html.escape(label)} <b>✗</b></span>"
+        if category in present:
+            return f"<span class='watch-pill on'>{html.escape(label)} <b>✓</b></span>"
+        return (
+            f"<span class='watch-pill watching' title='Watched — no qualifying "
+            f"event in this feed yet'>{html.escape(label)} <b>·</b></span>"
+        )
+
+    nature = (
+        pill("Deploys", "deployment", cfg.get("deploys", True))
+        + pill("Governance", "governance", cfg.get("governance", True))
+        + pill("Security", "security", cfg.get("security", True))
+    )
+    return (
+        "<div class='watch-badge' title='This agent&#39;s watch policy (set via "
+        "env vars or the local operator panel). A check marks a category with "
+        "briefs in this feed; a dot marks a type that is watched but had no "
+        "qualifying event in this window.'>"
+        "<span class='watch-badge-label'>AGENT WATCH SETTINGS</span>"
+        f"<span class='watch-bar'>Swaps &amp; transfers ≥ <b>{bar}</b></span>"
+        f"<span class='watch-natures'>{nature}</span>"
+        "</div>"
+    )
+
+
+# The five stages every published brief travels, from the real-world trigger to
+# the MATCH a reader can reproduce in their own browser. Static and the same for
+# the whole feed (each individual card carries its own per-brief links), so this
+# is the 5-second "why should I trust this?" answer shown above the cards.
+_LADDER_RUNGS = (
+    ("1", "Trigger", "Real Solana tx"),
+    ("2", "ACE · x402", "3 AI calls paid on Base"),
+    ("3", "Memo", "Hashed to Solana mainnet"),
+    ("4", "SAP", "Registered agent identity"),
+    ("5", "MATCH", "Re-check in your browser"),
+)
+
+
+def _proof_ladder_html() -> str:
+    """Compact end-to-end provenance flow strip, rendered above the feed.
+
+    Anchors only (no inline handlers) so the page stays CSP-clean: the SAP rung
+    opens the on-chain agent, the MATCH rung jumps to the cards (each of which
+    carries its own Verify button), and the caption links the machine-readable
+    proof.json. Rungs 1-3 are concepts the per-card links and proof.json prove.
+    """
+    parts: list[str] = []
+    last = len(_LADDER_RUNGS) - 1
+    for idx, (num, title, sub) in enumerate(_LADDER_RUNGS):
+        inner = (
+            f"<span class='rung-num'>{num}</span>"
+            f"<span class='rung-title'>{html.escape(title)}</span>"
+            f"<span class='rung-sub'>{html.escape(sub)}</span>"
+        )
+        if title == "SAP":
+            parts.append(
+                f"<a class='rung' href='{_AGENT_EXPLORER}' "
+                f"target='_blank' rel='noopener noreferrer'>{inner}</a>"
+            )
+        elif title == "MATCH":
+            parts.append(f"<a class='rung match' href='#feed'>{inner}</a>")
+        else:
+            parts.append(f"<div class='rung'>{inner}</div>")
+        if idx != last:
+            parts.append("<div class='ladder-arrow' aria-hidden='true'>&rarr;</div>")
+    return (
+        "<section class='proof-ladder'>"
+        "<div class='proof-ladder-label'>How every brief is proven — end to end</div>"
+        f"<div class='ladder-row'>{''.join(parts)}</div>"
+        "<div class='proof-ladder-links'>"
+        "<a href='#feed'>&darr; Verify any card</a>"
+        "<a href='/proof.json' target='_blank' rel='noopener noreferrer'>Full proof.json &nearr;</a>"
+        f"<a href='{_AGENT_EXPLORER}' target='_blank' rel='noopener noreferrer'>Agent on-chain &nearr;</a>"
+        "</div>"
+        "</section>"
     )
 
 
@@ -132,11 +250,20 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
             badges = []
             for s in it.sources:
                 parsed = urlparse(s)
-                domain = parsed.netloc.replace("www.", "")
-                if not domain:
-                    domain = "source"
+                label = parsed.netloc.replace("www.", "")
+                # Solscan account/tx links would all render as a bare "solscan.io"
+                # pill; show the entity stub instead so a program account vs its
+                # upgrade authority vs the tx stay distinguishable.
+                if label == "solscan.io":
+                    parts = [p for p in parsed.path.split("/") if p]
+                    if len(parts) >= 2 and parts[0] in ("account", "tx"):
+                        ident = parts[1]
+                        stub = f"{ident[:4]}…{ident[-4:]}" if len(ident) > 9 else ident
+                        label = f"{parts[0]} {stub}"
+                if not label:
+                    label = "source"
                 badges.append(
-                    f'<a class="source-badge" href="{html.escape(s)}" target="_blank" rel="noopener noreferrer">{html.escape(domain)}</a>'
+                    f'<a class="source-badge" href="{html.escape(s)}" target="_blank" rel="noopener noreferrer">{html.escape(label)}</a>'
                 )
             sources_html = (
                 f'<div class="badges-container">'
@@ -178,9 +305,12 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
             )
 
         cat = html.escape(it.category)
+        # Only value-moves carry a data-usd; nature events omit it so the amount
+        # slider never hides a deploy/governance/security brief.
+        usd_attr = f' data-usd="{it.amount_usd:.2f}"' if it.amount_usd > 0 else ""
 
         cards.append(
-            f'<article data-category="{cat.lower()}">'
+            f'<article data-category="{cat.lower()}"{usd_attr}>'
             f'{img_html}'
             f'<h2>{html.escape(_display_headline(it.headline))}</h2>'
             f'<p class="narrative">{html.escape(it.narrative)}</p>'
@@ -232,6 +362,22 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
             filter_buttons += (
                 f"<button class='filter-btn' data-action='filter' data-category='{_slug}'>{_label}</button>"
             )
+
+    # Client-side amount filter. Only shown when there is at least one value-move
+    # to filter by; the slider's ceiling is the largest brief on the feed, rounded
+    # up so the top card stays reachable at max. Nature events ignore it.
+    usd_values = [it.amount_usd for it in items if it.amount_usd > 0]
+    amount_slider = ""
+    if usd_values:
+        slider_max = int(math.ceil(max(usd_values)))
+        amount_slider = (
+            "<div class='usd-filter'>"
+            "<label for='usd-slider'>Min amount</label>"
+            f"<input type='range' id='usd-slider' min='0' max='{slider_max}' "
+            "value='0' step='1' data-action='usd-filter'>"
+            "<span id='usd-slider-val'>$0</span>"
+            "</div>"
+        )
 
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -534,13 +680,44 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         ".value-card.v3 .value-question{color:var(--success)}"
         ".value-card h3{font-size:16px;font-weight:600;color:#ffffff;margin:0}"
         ".value-card p{font-size:13px;line-height:1.6;color:var(--text-muted);margin:0;font-weight:300}"
-        
+
+        "/* Proof-ladder — end-to-end provenance flow strip */"
+        ".proof-ladder{max-width:880px;margin:0 auto 48px auto;padding:22px 26px;background:linear-gradient(135deg,rgba(139,92,246,0.06),rgba(6,182,212,0.04));border:1px solid rgba(139,92,246,0.18);border-radius:20px}"
+        ".proof-ladder-label{text-align:center;font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);margin-bottom:18px}"
+        ".ladder-row{display:flex;align-items:flex-start;justify-content:center}"
+        ".rung{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:0 4px;text-decoration:none;color:inherit}"
+        ".rung-num{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:monospace;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.35);color:#c084fc;transition:box-shadow 0.2s ease}"
+        ".rung.match .rung-num{background:var(--success-glow);border-color:rgba(16,185,129,0.45);color:#34d399}"
+        ".rung-title{font-size:12px;font-weight:700;color:#fff;letter-spacing:0.01em}"
+        ".rung-sub{font-size:10px;color:var(--text-muted);line-height:1.35;font-weight:300}"
+        "a.rung:hover{transform:translateY(-2px)}"
+        "a.rung:hover .rung-num{box-shadow:0 0 12px rgba(139,92,246,0.45)}"
+        "a.rung.match:hover .rung-num{box-shadow:0 0 12px rgba(16,185,129,0.45)}"
+        ".ladder-arrow{flex:0 0 auto;color:var(--text-muted);font-size:18px;padding-top:6px;opacity:0.5}"
+        ".proof-ladder-links{display:flex;justify-content:center;gap:20px;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.06)}"
+        ".proof-ladder-links a{font-size:11px;color:var(--accent);text-decoration:none;font-weight:600}"
+        ".proof-ladder-links a:hover{text-decoration:underline}"
+        "@media (max-width:640px){.ladder-row{flex-direction:column;align-items:stretch;gap:2px}.rung{flex-direction:row;justify-content:flex-start;text-align:left;gap:12px;padding:6px 0}.ladder-arrow{transform:rotate(90deg);padding:0;margin-left:14px}}"
+
         "/* New Overhaul CSS styles */"
+        ".watch-badge{display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;max-width:760px;margin:0 auto 20px auto;padding:10px 18px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:14px;font-size:12px;color:var(--text-muted)}"
+        ".watch-badge-label{font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--accent);text-transform:uppercase}"
+        ".watch-bar{font-weight:300}"
+        ".watch-bar b{color:#ffffff;font-weight:600}"
+        ".watch-natures{display:flex;gap:8px;flex-wrap:wrap}"
+        ".watch-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}"
+        ".watch-pill.on b{color:var(--success)}"
+        ".watch-pill.off{opacity:0.45}.watch-pill.off b{color:#f87171}"
+        ".watch-pill.watching{opacity:0.55}.watch-pill.watching b{color:var(--text-muted);font-weight:700}"
         ".filter-bar{display:flex;justify-content:center;gap:10px;margin-bottom:40px;flex-wrap:wrap}"
         ".filter-btn{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);color:var(--text-muted);padding:8px 16px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s cubic-bezier(0.4,0,0.2,1);text-transform:uppercase;letter-spacing:0.04em}"
         ".filter-btn:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.15);color:#ffffff}"
         ".filter-btn.active{background:var(--primary);border-color:var(--primary);color:#ffffff;box-shadow:0 0 15px rgba(139,92,246,0.4)}"
-        
+        ".usd-filter{display:flex;align-items:center;justify-content:center;gap:12px;max-width:520px;margin:0 auto 40px auto;font-size:12px;color:var(--text-muted)}"
+        ".usd-filter label{font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap}"
+        ".usd-filter input[type=range]{flex:1;accent-color:var(--primary);cursor:pointer;height:4px}"
+        "#usd-slider-val{font-family:monospace;color:#ffffff;min-width:90px;text-align:right;font-weight:600}"
+
         ".request-brief-section{max-width:800px;margin:0 auto 48px auto}"
         ".request-card{background:linear-gradient(135deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01));backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:20px;padding:24px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);transition:all 0.3s ease}"
         ".request-card:hover{border-color:rgba(139,92,246,0.25);box-shadow:0 12px 40px rgba(139,92,246,0.1)}"
@@ -614,8 +791,11 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "<section class=hero>"
         "<div class=hero-badge>⚡ ON-CHAIN EVENT BRIEFS</div>"
         "<h1>Autonomous Solana Whale & Event Intelligence</h1>"
-        "<p class=hero-desc>OnchainBrief watches Solana mainnet for the moves that matter — large transfers, new program deployments, big swaps, governance actions — and turns each into a one-glance, fact-checked brief anchored on-chain for provenance.</p>"
+        "<p class=hero-desc>OnchainBrief reads Solana mainnet as blocks land and turns consequential transactions — large transfers, new program deployments, sizable swaps, and governance actions — into short, sourced briefs. Each one is hashed onto the ledger itself, so its origin can be checked independently.</p>"
         "</section>"
+
+        # Proof-ladder: the end-to-end "how is this proven?" flow, shown up front.
+        f"{_proof_ladder_html()}"
         
         f"{request_section}"
         
@@ -623,26 +803,31 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "<div class='value-card v1'>"
         "<div class=value-question>WHAT IS ONCHAINBRIEF?</div>"
         "<h3>Real-time Event Watcher</h3>"
-        "<p>An autonomous AI agent that streams the Solana ledger and surfaces the moves that matter — whale transfers, new program deployments, large swaps, and governance actions — out of millions of routine transactions.</p>"
+        "<p>An autonomous agent follows the Solana ledger block by block and isolates the events worth reading — whale transfers, new program deployments, large swaps, and governance actions — from the steady stream of routine activity.</p>"
         "</div>"
         "<div class='value-card v2'>"
         "<div class=value-question>WHY DOES IT EXIST?</div>"
-        "<h3>Facts, Not Noise</h3>"
-        "<p>On-chain logs are dense and unreadable. The agent decodes the real numbers — amount, asset, who → whom — fetches web context for the entities, and writes a two-line brief: what happened, and why it matters. No hype.</p>"
+        "<h3>Raw Logs, Made Readable</h3>"
+        "<p>Transaction logs are dense and hard to parse. The agent decodes what actually moved — amount, asset, sender and recipient — adds sourced context on the entities involved, and writes a two-line brief: what happened, and why it matters.</p>"
         "</div>"
         "<div class='value-card v3'>"
         "<div class=value-question>WHAT VALUE DOES IT BRING?</div>"
         "<h3>Verifiable Ledger Provenance</h3>"
-        "<p>Trust is built-in. Every brief is cryptographically signed and attested to Solana's ledger via Memo & SAP protocol, producing a permanent, tamper-proof history of on-chain events.</p>"
+        "<p>Every brief is hashed and recorded on Solana's ledger through the Memo and SAP protocols. The record is permanent and cannot be changed after the fact, so any reader can confirm that a brief existed — unchanged — at the moment it was published.</p>"
         "</div>"
         "</section>"
         
+        # Read-only banner: the agent's live editorial bar (operator-configurable)
+        f"{_watch_badge_html(present_cats)}"
+
         # Filter tabs
         "<div class='filter-bar'>"
         f"{filter_buttons}"
         "</div>"
-        
-        f"<main class=grid>{body}</main>"
+        # Client-side amount slider (only present when there are value-moves)
+        f"{amount_slider}"
+
+        f"<main class=grid id=feed>{body}</main>"
         "</div>"
         "<footer>"
         "<p>Powered by ACE Services & Solana. Attested via Agent PDA. <a href='https://github.com/cryptoyasenka/onchainbrief' target=_blank rel='noopener noreferrer'>View Source</a></p>"
@@ -889,12 +1074,19 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "  }"
         "}"
         
-        "function filterCategory(cat, btnEl) {"
-        "  document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));"
-        "  if (btnEl) btnEl.classList.add('active');"
+        # Category pills and the amount slider compose: a card shows only if it
+        # clears BOTH. Cards without data-usd (nature events) ignore the slider.
+        "window.__activeCat = 'all';"
+        "window.__minUsd = 0;"
+        "window.applyFeedFilters = function() {"
+        "  const cat = window.__activeCat;"
+        "  const minUsd = window.__minUsd;"
         "  document.querySelectorAll('.grid article').forEach(card => {"
         "    const cardCat = card.getAttribute('data-category');"
-        "    if (cat === 'all' || cardCat === cat) {"
+        "    const usdAttr = card.getAttribute('data-usd');"
+        "    const catOk = (cat === 'all' || cardCat === cat);"
+        "    const usdOk = (usdAttr === null || usdAttr === '') ? true : (parseFloat(usdAttr) >= minUsd);"
+        "    if (catOk && usdOk) {"
         "      card.style.display = 'flex';"
         "      card.style.opacity = '0';"
         "      setTimeout(() => {"
@@ -905,7 +1097,20 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "      card.style.display = 'none';"
         "    }"
         "  });"
+        "};"
+        "function filterCategory(cat, btnEl) {"
+        "  document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));"
+        "  if (btnEl) btnEl.classList.add('active');"
+        "  window.__activeCat = cat;"
+        "  window.applyFeedFilters();"
         "}"
+        "window.applyUsdFilter = function(val) {"
+        "  const n = parseFloat(val) || 0;"
+        "  window.__minUsd = n;"
+        "  const lbl = document.getElementById('usd-slider-val');"
+        "  if (lbl) lbl.textContent = '$' + n.toLocaleString('en-US');"
+        "  window.applyFeedFilters();"
+        "};"
         
         "async function toggleWalletConnect() {"
         "  if (!window.solana || !window.solana.isPhantom) {"
@@ -1081,6 +1286,16 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "      break;"
         "  }"
         "});"
+        # A second delegated listener for `input` events (the range slider).
+        # Keeps the slider free of any inline oninput so the page carries zero
+        # on*= attributes and the CSP can tighten toward dropping unsafe-inline.
+        "document.addEventListener('input', function(e) {"
+        "  const el = e.target.closest('[data-action]');"
+        "  if (!el) return;"
+        "  if (el.getAttribute('data-action') === 'usd-filter' && window.applyUsdFilter) {"
+        "    window.applyUsdFilter(el.value);"
+        "  }"
+        "});"
         "const sse = new EventSource('/api/sse');"
         "sse.onmessage = function(event) {"
         "  try {"
@@ -1095,6 +1310,21 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "</script>"
         "</body></html>"
     )
+
+
+# Feed ordering: lead with the most newsworthy, distinct card so the first
+# screen is the strongest one — a governance action or a named program upgrade,
+# not an anonymous fresh deploy. Ties keep the caller's order (newest first).
+_CATEGORY_RANK = {"governance": 0, "security": 1, "volume": 2, "activity": 3,
+                  "deployment": 4}
+
+
+def _feature_rank(item: FeedItem) -> tuple:
+    cat_rank = _CATEGORY_RANK.get(item.category.lower(), 3)
+    # Within deploys, a named upgrade outranks an anonymous fresh deploy.
+    deploy_sub = 0 if "upgrad" in item.headline.lower() else 1
+    # Larger value-moves first within a value category.
+    return (cat_rank, deploy_sub, -item.amount_usd)
 
 
 def build_feed(briefs_dir: str | Path, out_html: str | Path) -> Path:
@@ -1127,5 +1357,7 @@ def build_feed(briefs_dir: str | Path, out_html: str | Path) -> Path:
         reverse=True,
     )
     items = [it for p in mds if (it := _parse_brief(p))]
+    # Stable significance sort: strongest card first, mtime order within ties.
+    items.sort(key=_feature_rank)
     out_html.write_text(_render(items, agent_payment_wallet), encoding="utf-8")
     return out_html

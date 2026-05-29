@@ -183,38 +183,60 @@ class X402Client:
 
 
     def _post_x402(self, url: str, payload: dict[str, Any], *, timeout: float) -> requests.Response:
+        # Phase 1 - reach the 402 challenge. No authorization has been signed
+        # yet, so a transient 5xx or network blip here is safe to retry: the
+        # request is a plain unpaid POST with no money attached.
+        challenge: dict | None = None
         for attempt in range(1, 3):
             try:
                 r1 = self._s.post(url, json=payload, timeout=timeout)
-                if r1.status_code != 402:
-                    if r1.status_code >= 500 and attempt < 2:
-                        time.sleep(2.0 * attempt)
-                        continue
-                    if r1.status_code >= 400:
-                        raise X402Error(f"{url} initial {r1.status_code}: {r1.text[:500]}")
-                    return r1
-                try:
-                    challenge = r1.json()
-                except Exception:
-                    raise X402Error(f"{url} 402 body not JSON: {r1.text[:500]}")
-                accept = _pick_accept(challenge)
-                _validate_accept(accept)
-                x_payment = _sign_x_payment(self._account, accept)
-                r2 = self._s.post(
-                    url, json=payload, timeout=timeout,
-                    headers={"X-PAYMENT": x_payment},
-                )
-                if r2.status_code >= 500 and attempt < 2:
-                    time.sleep(2.0 * attempt)
-                    continue
-                if r2.status_code >= 400:
-                    raise X402Error(f"{url} retry {r2.status_code}: {r2.text[:500]}")
-                return r2
             except requests.RequestException as e:
                 if attempt < 2:
                     time.sleep(2.0 * attempt)
                     continue
-                raise X402Error(f"{url} network error: {e!r}")
+                raise X402Error(f"{url} network error (pre-payment): {e!r}")
+            if r1.status_code != 402:
+                if r1.status_code >= 500 and attempt < 2:
+                    time.sleep(2.0 * attempt)
+                    continue
+                if r1.status_code >= 400:
+                    raise X402Error(f"{url} initial {r1.status_code}: {r1.text[:500]}")
+                return r1  # endpoint answered without demanding payment
+            try:
+                challenge = r1.json()
+            except Exception:
+                raise X402Error(f"{url} 402 body not JSON: {r1.text[:500]}")
+            break
+        if challenge is None:
+            raise X402Error(f"{url} could not obtain 402 challenge after retries")
+
+        # Phase 2 - sign and send the payment EXACTLY ONCE. Each signed EIP-3009
+        # authorization carries a fresh random nonce, so a retry after the
+        # facilitator may have already settled the first one would mint a SECOND
+        # valid authorization and charge the wallet twice. Any ambiguity past
+        # this line (5xx or a dropped connection) is therefore a hard stop with
+        # an explicit "unknown settlement state" error, never a silent re-sign.
+        accept = _pick_accept(challenge)
+        _validate_accept(accept)
+        x_payment = _sign_x_payment(self._account, accept)
+        try:
+            r2 = self._s.post(
+                url, json=payload, timeout=timeout,
+                headers={"X-PAYMENT": x_payment},
+            )
+        except requests.RequestException as e:
+            raise X402Error(
+                f"{url} network error AFTER sending X-PAYMENT - settlement state "
+                f"UNKNOWN, not retrying to avoid a double-charge: {e!r}"
+            )
+        if r2.status_code >= 500:
+            raise X402Error(
+                f"{url} {r2.status_code} AFTER sending X-PAYMENT - settlement state "
+                f"UNKNOWN, not retrying to avoid a double-charge: {r2.text[:500]}"
+            )
+        if r2.status_code >= 400:
+            raise X402Error(f"{url} retry {r2.status_code}: {r2.text[:500]}")
+        return r2
 
 
     def call(self, service: str, payload: dict[str, Any]) -> requests.Response:

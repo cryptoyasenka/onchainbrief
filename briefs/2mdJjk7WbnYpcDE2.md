@@ -2,14 +2,10 @@
 
 ![card](2mdJjk7WbnYpcDE2.png)
 
-A new Solana program was deployed via the BPF upgradeable loader in transaction 2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa. Programs deployed through the upgradeable loader can later be modified if an upgrade authority remains active, making authority management a key factor for assessing long-term immutability and governance risk.
+A new Solana program was deployed through the BPF upgradeable loader in transaction `2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa`. The program has no public identity yet — no name, site, or documentation — so the transaction itself is the only record available to reason from. A program on this loader can be modified while its upgrade authority remains active, so whether that authority is retained or revoked is the key question for its long-term immutability.
 
 ## Sources
-- https://solana.com/docs/core/programs/program-deployment
-- https://solana.stackexchange.com/questions/3286/difference-bewteen-solana-deploy-and-solana-program-deploy
-- https://sec3.dev/blog/solana-internals-part-2-how-is-a-solana-program-deployed-and-upgraded
-- https://www.youtube.com/watch?v=Ghi8il2EQeg
-- https://blocksecteam.medium.com/secure-the-solana-ecosystem-3-program-upgrade-5590c746016
+- https://solscan.io/tx/2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa
 
 ## Provenance
 Solana tx `2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa` — https://solscan.io/tx/2mdJjk7WbnYpcDE2vj3GPTNdDY3SmBLs9o7s6mooDdT1cHsBUSqCQB3WBs4fWijragYqjruRzdYRLV5gQPndMyMa

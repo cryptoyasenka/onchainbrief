@@ -21,7 +21,7 @@ volume.
 **Empirical proof of the on-chain payment path.** All three services have
 been settled live on Base mainnet from the dedicated wallet to ACE's
 facilitator `0x4F0E2D34…dadCeE7`. The live feed serves four briefs across the
-deployment and volume categories; each brief's three ACE calls (search / chat
+deployment and governance categories; each brief's three ACE calls (search / chat
 / image) are individual USDC `Transfer` receipts on Base — twelve settlements
 behind the published feed — and each brief is independently attested on Solana
 **mainnet** via the Memo program (one tx per brief, linked from its card, and
@@ -42,6 +42,26 @@ token, no wallet, no network needed. Open the printed `index.html` to see a
 real generated brief and its trading-card visual. This is the fastest way to
 see what the agent produces; the live on-chain paths (x402 settlement, Memo
 attestation, SAP registration) are each verifiable separately below.
+
+## Judge verification in 60 seconds
+
+The feed opens with a **proof-ladder** — Trigger → ACE·x402 → Memo → SAP →
+MATCH — so the end-to-end provenance is legible before you scroll. To check it
+yourself:
+
+1. Open the live feed: <https://onchainbrief-production.up.railway.app>.
+2. On any card, click **Verify On-Chain**. The page fetches that brief's Memo
+   attestation from Solana mainnet, recomputes the served artifact's SHA-256,
+   and shows **MATCH** — the published bytes are exactly what was attested.
+3. Open **`/proof.json`**
+   (<https://onchainbrief-production.up.railway.app/proof.json>) for the whole
+   audit trail in one file: every card's trigger tx, artifact hash, Memo
+   attestation tx, the SAP agent PDA, and the x402 rail, each with an explorer
+   link.
+4. Reproduce the Base USDC settlements yourself: `python scripts/fetch_basescan_tx.py`.
+
+No funds or keys needed for step 1-3; `python scripts/demo.py` runs the same
+pipeline end-to-end fully offline.
 
 ## Layout
 

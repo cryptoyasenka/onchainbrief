@@ -114,6 +114,19 @@ async def handle(
         await asyncio.to_thread(enrich_event, ev, rpc_url, tx_rpc_url=tx_rpc_url)
     except Exception as e:  # noqa: BLE001 - enrichment is non-critical
         print(f"[ENRICH-SKIP] {ev.signature}: {e!r}")
+    # Hard editorial bar: the cheap pre-enrich filter only knew "something
+    # non-trivial happened"; now that the tx is decoded we can reject the events
+    # that are technically a swap/transfer but not worth a public brief (a sub-
+    # threshold flow, or undecodable activity). Spending below the bar is what
+    # filled the feed with $0.11 cards.
+    from .filter import is_significant
+
+    if not is_significant(ev):
+        facts = getattr(ev, "facts", None)
+        kind = getattr(facts, "kind", "?")
+        usd = getattr(facts, "amount_usd", None)
+        print(f"[SKIP-INSIGNIFICANT] {ev.signature} kind={kind} usd={usd}")
+        return
     # The throttle is a spend gate; log-only mode never spends, so it must
     # not burn the daily budget (else a no-creds dry-run logs one candidate
     # then prints [THROTTLED] forever at the default cap of 1).
