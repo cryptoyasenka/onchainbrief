@@ -16,6 +16,8 @@ Gates:
     5. tracked secrets   - no tracked .env/keypair/key file and no live-key prefix.
     6. artifact hashes   - each brief's sha256(png || md) == its attest sidecar.
     7. feed card count   - site/index.html article count == number of briefs.
+    8. artifact leak-scan - briefs/ + site/ text carry no internal names/secrets
+                            (scrub skips them by design, so this covers the gap).
 """
 from __future__ import annotations
 
@@ -154,6 +156,40 @@ def gate_card_count():
     return ok, f"{cards} cards rendered vs {briefs} brief(s)"
 
 
+# briefs/ and site/ are skipped by scrub_public_repo.py by design, so these
+# public-facing artifacts get no automated leak check. Scan their TEXT files for
+# internal names/secrets. Codenames/personal-name/tooling traces are base64-only
+# so this public-shipped script does not itself carry the terms it forbids.
+_LEAK_TERMS = [base64.b64decode(b).decode() for b in (
+    b"WWFuYQ==",      # personal name
+    b"Q3VzdG9z",      # prior codename
+    b"Q2xhdWRl",      # tooling trace
+)] + ["mnemonic", "seed phrase", "PRIVATE KEY", "C:\\Projects", "C:/Projects", _LIVE_KEY_PREFIX]
+_ARTIFACT_TEXT_SUFFIX = {".md", ".html", ".htm", ".json", ".js", ".css", ".txt", ".svg"}
+
+
+def gate_artifact_text_leak():
+    hits: list[str] = []
+    scanned = 0
+    for root in (BRIEFS, ROOT / "site"):
+        if not root.exists():
+            continue
+        for p in sorted(root.rglob("*")):
+            if not p.is_file() or p.suffix.lower() not in _ARTIFACT_TEXT_SUFFIX:
+                continue
+            scanned += 1
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for term in _LEAK_TERMS:
+                if term and term in text:
+                    hits.append(f"{p.relative_to(ROOT)}: '{term[:6]}...'")
+    if hits:
+        return False, "; ".join(hits[:5])
+    return True, f"{scanned} artifact text file(s): no internal names/secrets"
+
+
 GATES = [
     ("pytest", gate_pytest),
     ("tsc --noEmit", gate_tsc),
@@ -162,6 +198,7 @@ GATES = [
     ("tracked secrets", gate_tracked_secrets),
     ("artifact hashes", gate_artifact_hashes),
     ("feed card count", gate_card_count),
+    ("artifact leak-scan", gate_artifact_text_leak),
 ]
 
 

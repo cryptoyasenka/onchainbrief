@@ -31,6 +31,7 @@ ALLOW = [
     "src", "tests", "scripts", "sap",
     "README.md", "requirements.txt", "pyproject.toml",
     ".env.example", ".gitignore", "railway.toml", "Procfile",
+    ".github",
 ]
 # Substrings that must never reach the public tree (case-insensitive).
 # Base64-encoded so this tool — itself in the public allowlist — does not

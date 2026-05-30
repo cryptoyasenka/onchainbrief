@@ -1,0 +1,37 @@
+# Continuous gate for the public OnchainBrief code repo.
+#
+# This repo is published by scripts/scrub_public_repo.py, which ships only
+# source/tests/scripts/sap. The generated feed (briefs/ + site/) is deployed
+# to Railway, not committed here, so the artifact-hash, card-count and feed
+# leak-scan gates in scripts/final_gate.py run LOCALLY before publish (they
+# need those artifacts present). CI covers every check the public tree can
+# prove on its own: the offline suite, the SAP type-check, the SAP
+# high/critical dependency gate, and the allowlist leak gate.
+name: gate
+on: [push, pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Python deps
+        run: pip install -r requirements.txt pytest
+      - name: Offline regression suite
+        run: python -m pytest tests -q
+      - name: Install SAP toolchain
+        working-directory: sap
+        run: npm ci
+      - name: SAP type-check
+        working-directory: sap
+        run: npx tsc --noEmit
+      - name: SAP dependency gate (fails on high/critical)
+        working-directory: sap
+        run: npm run audit:ci
+      - name: Public allowlist leak gate
+        run: python scripts/scrub_public_repo.py --check

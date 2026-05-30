@@ -576,6 +576,18 @@ class CustomFeedHandler(http.server.SimpleHTTPRequestHandler):
             "geolocation=(), microphone=(), camera=()",
         )
         self.send_header("Content-Security-Policy", build_csp())
+        # Transport + isolation hardening. HSTS is safe behind Railway's TLS
+        # termination; COOP severs any cross-origin opener relationship. Both
+        # are additive — they do not change how the self-contained page renders.
+        self.send_header(
+            "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+        )
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        # proof.json is the audit trail and index.html is a live feed; ask
+        # clients to revalidate so a verifier never reads a stale card set.
+        served = urlsplit(self.path).path
+        if served.endswith((".json", ".html")) or served.endswith("/"):
+            self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def _check_operator_token(self) -> bool:
