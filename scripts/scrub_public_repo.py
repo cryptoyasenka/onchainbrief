@@ -29,7 +29,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 # and packaging/deploy config. Everything else stays local.
 ALLOW = [
     "src", "tests", "scripts", "sap",
-    "README.md", "requirements.txt", "pyproject.toml",
+    "README.md", "SECURITY.md", "requirements.txt", "pyproject.toml",
     ".env.example", ".gitignore", "railway.toml", "Procfile",
     ".github",
 ]

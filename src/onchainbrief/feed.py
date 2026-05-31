@@ -790,8 +790,8 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "</nav>"
         "<section class=hero>"
         "<div class=hero-badge>⚡ ON-CHAIN EVENT BRIEFS</div>"
-        "<h1>Autonomous Solana Whale & Event Intelligence</h1>"
-        "<p class=hero-desc>OnchainBrief reads Solana mainnet as blocks land and turns consequential transactions — large transfers, new program deployments, sizable swaps, and governance actions — into short, sourced briefs. Each one is hashed onto the ledger itself, so its origin can be checked independently.</p>"
+        "<h1>Autonomous, Verifiable Solana Event Intelligence</h1>"
+        "<p class=hero-desc>An autonomous agent reads Solana mainnet block by block and turns the events that change what's running on-chain — new program deployments and governance actions — into short, sourced briefs. Every brief is hashed onto Solana's own ledger, so each one isn't a claim you have to trust — it's intelligence you can re-check in your own browser.</p>"
         "</section>"
 
         # Proof-ladder: the end-to-end "how is this proven?" flow, shown up front.
