@@ -31,7 +31,7 @@ except Exception:
 
 from onchainbrief.txfacts import _deploy_target, fetch_transaction  # noqa: E402
 
-RPC = os.getenv("MAINNET_RPC_URL") or "https://solana-rpc.publicnode.com"
+RPC = os.getenv("MAINNET_RPC_URL") or "https://api.mainnet.solana.com"
 DOC = "https://solana.com/docs/core/programs/program-deployment"
 
 # (brief id, trigger sig) — the 3 deploy/upgrade cards. Governance brief omitted:

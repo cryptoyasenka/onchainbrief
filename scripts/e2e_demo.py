@@ -44,7 +44,7 @@ MAINNET_RPC = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 # getSignaturesForAddress + light calls hit MAINNET_RPC (OOBE Synapse in the
 # hybrid setup — real ecosystem traffic). getTransaction needs an archival RPC
 # OOBE's free tier won't serve, so decoding routes here instead.
-DECODE_RPC = os.getenv("SOLANA_TX_RPC_URL", "https://solana-rpc.publicnode.com")
+DECODE_RPC = os.getenv("SOLANA_TX_RPC_URL", "https://api.mainnet.solana.com")
 BRIEFS_DIR = os.getenv("BRIEFS_DIR", "./briefs")
 SITE_HTML = os.getenv("SITE_HTML", "./site/index.html")
 DEMO_BRIEFS = int(os.getenv("DEMO_BRIEFS", "4"))

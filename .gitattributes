@@ -1,0 +1,6 @@
+# Attested artifacts: the on-chain Memo sha256 is computed over these exact
+# bytes (PNG image || markdown body). If git normalizes the markdown line
+# endings, the rehash stops matching the ledger and the proof manifest gate
+# fails on a fresh (LF) checkout. Pin them so every checkout is byte-identical.
+briefs/*.md -text
+briefs/*.png binary

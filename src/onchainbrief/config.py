@@ -50,9 +50,11 @@ X402_EXPECTED_VERIFYING_CONTRACT = os.getenv("X402_EXPECTED_VERIFYING_CONTRACT",
 # Both the generated feed JS (feed.py) and the server CSP connect-src
 # (scripts/serve_feed.py) read these, so a verify fetch is never CSP-blocked by
 # a host the page is allowed to call. api.mainnet-beta is rate-limited and lacks
-# permissive CORS, so the keyless publicnode archival RPC is the mainnet default.
+# permissive CORS; solana-rpc.publicnode.com is load-balanced and prunes history
+# (week-old getTransaction returns null), which breaks browser Verify, so the
+# keyless archival api.mainnet.solana.com is the mainnet default.
 DEVNET_RPC_URL = os.getenv("DEVNET_RPC_URL", "https://api.devnet.solana.com")
-MAINNET_RPC_URL = os.getenv("MAINNET_RPC_URL", "https://solana-rpc.publicnode.com")
+MAINNET_RPC_URL = os.getenv("MAINNET_RPC_URL", "https://api.mainnet.solana.com")
 
 # On-demand "Request a Brief" paid flow. The user's SOL payment and the
 # transaction being analyzed live on *different* clusters, so they need
@@ -118,9 +120,9 @@ class Settings:
                 "SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"
             ),
             # getTransaction RPC (OOBE free tier can't serve it - see txfacts).
-            # Keyless archival fallback by default.
+            # Keyless archival fallback by default (publicnode prunes history).
             solana_tx_rpc_url=os.getenv(
-                "SOLANA_TX_RPC_URL", "https://solana-rpc.publicnode.com"
+                "SOLANA_TX_RPC_URL", "https://api.mainnet.solana.com"
             ),
             solana_ws_url=os.getenv(
                 "SOLANA_WS_URL", "wss://us-1-mainnet.oobeprotocol.ai/ws"

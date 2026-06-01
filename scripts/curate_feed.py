@@ -45,7 +45,7 @@ from onchainbrief.watcher import LogEvent  # noqa: E402
 from onchainbrief.x402_client import X402Client  # noqa: E402
 
 MAIN = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-DECODE = os.getenv("SOLANA_TX_RPC_URL", "https://solana-rpc.publicnode.com")
+DECODE = os.getenv("SOLANA_TX_RPC_URL", "https://api.mainnet.solana.com")
 BRIEFS_DIR = str(ROOT / "briefs")
 SITE_HTML = str(ROOT / "site" / "index.html")
 SIGS_PER_SOURCE = int(os.getenv("CURATE_SIGS_PER_SOURCE", "60"))

@@ -107,7 +107,7 @@ async def handle(
     # a failed RPC round-trip leaves ev.facts None and the pipeline falls back.
     rpc_url = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
     # getTransaction goes to a decode RPC (OOBE's free tier can't serve it).
-    tx_rpc_url = os.getenv("SOLANA_TX_RPC_URL", "https://solana-rpc.publicnode.com")
+    tx_rpc_url = os.getenv("SOLANA_TX_RPC_URL", "https://api.mainnet.solana.com")
     try:
         from .txfacts import enrich_event
 

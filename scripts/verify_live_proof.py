@@ -30,7 +30,7 @@ DEFAULT_URL = "https://onchainbrief-production.up.railway.app"
 # in-browser "Verify On-Chain" button uses, so this CLI mirrors what a judge on
 # a clean network sees. Pass --rpc for a private/paid endpoint if it
 # rate-limits. Memos live on mainnet-beta (proof.json names it).
-DEFAULT_RPC = "https://solana-rpc.publicnode.com"
+DEFAULT_RPC = "https://api.mainnet.solana.com"
 # (connect, read) seconds. A slow TLS handshake or a Railway cold-start read is
 # transient, not a proof failure — split timeouts let each leg fail fast and be
 # retried independently by the session below.
