@@ -167,7 +167,7 @@ def _watch_badge_html(present_cats: set[str] | None = None) -> str:
         if category in present:
             return f"<span class='watch-pill on'>{html.escape(label)} <b>✓</b></span>"
         return (
-            f"<span class='watch-pill watching' title='Watched — no qualifying "
+            f"<span class='watch-pill watching' title='Watched, no qualifying "
             f"event in this feed yet'>{html.escape(label)} <b>·</b></span>"
         )
 
@@ -230,7 +230,7 @@ def _proof_ladder_html() -> str:
             parts.append("<div class='ladder-arrow' aria-hidden='true'>&rarr;</div>")
     return (
         "<section class='proof-ladder'>"
-        "<div class='proof-ladder-label'>How every brief is proven — end to end</div>"
+        "<div class='proof-ladder-label'>How every brief is proven, end to end</div>"
         f"<div class='ladder-row'>{''.join(parts)}</div>"
         "<div class='proof-ladder-links'>"
         "<a href='#feed'>&darr; Verify any card</a>"
@@ -382,7 +382,7 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
     return (
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<title>OnchainBrief — Verified Solana Intelligence</title>"
+        "<title>OnchainBrief: Verified Solana Briefs</title>"
         "<script src='https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js' "
         "integrity='sha384-I45YF+S0YGWIolUyTksLk9TNtTqaDgZg8e6T1OoBoJvvFmphqYNIPZw3Kl0TkZNN' "
         "crossorigin='anonymous'></script>"
@@ -790,8 +790,8 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "</nav>"
         "<section class=hero>"
         "<div class=hero-badge>⚡ ON-CHAIN EVENT BRIEFS</div>"
-        "<h1>Autonomous, Verifiable Solana Event Intelligence</h1>"
-        "<p class=hero-desc>An autonomous agent reads Solana mainnet block by block and turns the events that change what's running on-chain — new program deployments and governance actions — into short, sourced briefs. Every brief is hashed onto Solana's own ledger, so each one isn't a claim you have to trust — it's intelligence you can re-check in your own browser.</p>"
+        "<h1>Autonomous Solana briefs you can verify yourself</h1>"
+        "<p class=hero-desc>An autonomous agent reads Solana mainnet and writes short, sourced briefs on the events that change what's running on-chain, like new program deployments and governance actions. Each brief is hashed onto Solana's ledger, so you can re-check any of them in your own browser instead of taking our word for it.</p>"
         "</section>"
 
         # Proof-ladder: the end-to-end "how is this proven?" flow, shown up front.
@@ -803,17 +803,17 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "<div class='value-card v1'>"
         "<div class=value-question>WHAT IS ONCHAINBRIEF?</div>"
         "<h3>Real-time Event Watcher</h3>"
-        "<p>An autonomous agent follows the Solana ledger block by block and isolates the events worth reading — whale transfers, new program deployments, large swaps, and governance actions — from the steady stream of routine activity.</p>"
+        "<p>An autonomous agent follows the Solana ledger block by block. Out of the steady stream of routine activity, it picks the events worth reading: whale transfers, new program deployments, large swaps, and governance actions.</p>"
         "</div>"
         "<div class='value-card v2'>"
         "<div class=value-question>WHY DOES IT EXIST?</div>"
         "<h3>Raw Logs, Made Readable</h3>"
-        "<p>Transaction logs are dense and hard to parse. The agent decodes what actually moved — amount, asset, sender and recipient — adds sourced context on the entities involved, and writes a two-line brief: what happened, and why it matters.</p>"
+        "<p>Transaction logs are dense and hard to parse. The agent decodes what actually moved (amount, asset, sender, recipient), adds sourced context on the entities involved, and writes a two-line brief covering what happened and why it matters.</p>"
         "</div>"
         "<div class='value-card v3'>"
         "<div class=value-question>WHAT VALUE DOES IT BRING?</div>"
         "<h3>Verifiable Ledger Provenance</h3>"
-        "<p>Every brief is hashed and recorded on Solana's ledger through the Memo and SAP protocols. The record is permanent and cannot be changed after the fact, so any reader can confirm that a brief existed — unchanged — at the moment it was published.</p>"
+        "<p>Every brief is hashed and recorded on Solana's ledger through the Memo and SAP protocols. That record is permanent and cannot be edited after the fact, so any reader can confirm a brief existed unchanged at the moment it was published.</p>"
         "</div>"
         "</section>"
         
