@@ -17,8 +17,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .config import (
-    DEVNET_RPC_URL,
-    MAINNET_RPC_URL,
     PAYMENT_CLUSTER,
     PAYMENT_RPC_URL,
     REQUEST_BRIEF_LAMPORTS,
@@ -986,18 +984,12 @@ def _render(items: list[FeedItem], agent_payment_wallet: str = "") -> str:
         "  attestDot.className = 'timeline-dot loading';"
         
         "  try {"
-        f"    const rpcUrl = cluster === 'mainnet-beta' ? '{MAINNET_RPC_URL}' : '{DEVNET_RPC_URL}';"
-        "    const response = await fetch(rpcUrl, {"
+        "    const response = await fetch('/api/verify-tx', {"
         "      method: 'POST',"
         "      headers: { 'Content-Type': 'application/json' },"
-        "      body: JSON.stringify({"
-        "        jsonrpc: '2.0',"
-        "        id: 1,"
-        "        method: 'getTransaction',"
-        "        params: [attestSig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }]"
-        "      })"
+        "      body: JSON.stringify({ signature: attestSig, cluster: cluster })"
         "    });"
-        "    if (!response.ok) throw new Error(`RPC status ${response.status}`);"
+        "    if (!response.ok) throw new Error(`Verify status ${response.status}`);"
         "    const data = await response.json();"
         "    if (data.error) throw new Error(data.error.message || 'RPC Error');"
         "    const tx = data.result;"

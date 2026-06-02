@@ -627,6 +627,8 @@ class CustomFeedHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/request-brief":
             self.handle_request_brief()
+        elif self.path == "/api/verify-tx":
+            self.handle_verify_tx()
         elif self.path == "/operator/config":
             self.handle_operator_config()
         else:
@@ -765,6 +767,68 @@ class CustomFeedHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_error(msg, status)
         except Exception as e:
             print(f"[REQUEST-ERROR] {e!r}")
+            self.send_json_error("Internal server error", 500)
+
+    def handle_verify_tx(self):
+        """Server-side getTransaction proxy for the in-browser Verify-On-Chain
+        check. The public archival RPC (api.mainnet.solana.com) serves
+        getTransaction fine server-to-server but 403s browser-origin requests,
+        so the page calls this same-origin endpoint instead of the RPC directly.
+        Only the memo fetch moves here; the artifact re-hash + MATCH comparison
+        stay client-side, so the trust model is unchanged. `signature` is the
+        sole user input and is only ever a getTransaction param against a fixed
+        config RPC URL, so there is no SSRF surface."""
+        try:
+            client_ip = self.client_address[0] if self.client_address else "unknown"
+            if not _rate_allowed(client_ip):
+                self.send_json_error("Rate limit exceeded", 429)
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self.send_json_error("Content-Length is required", 411)
+                return
+            if content_length <= 0:
+                self.send_json_error("Request body is required", 400)
+                return
+            if content_length > MAX_REQUEST_BYTES:
+                self.send_json_error("Request body too large", 413)
+                return
+            body = self.rfile.read(content_length)
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                self.send_json_error("Invalid JSON body", 400)
+                return
+            sig = (data.get("signature") or "").strip()
+            cluster = (data.get("cluster") or "mainnet-beta").strip()
+            b58 = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+            if not (32 <= len(sig) <= 128) or any(c not in b58 for c in sig):
+                self.send_json_error("Invalid transaction signature", 400)
+                return
+            rpc = DEVNET_RPC_URL if cluster == "devnet" else MAINNET_RPC_URL
+            try:
+                upstream = requests.post(
+                    rpc,
+                    json={
+                        "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
+                        "params": [sig, {"encoding": "jsonParsed",
+                                         "maxSupportedTransactionVersion": 0}],
+                    },
+                    timeout=20,
+                )
+                payload = upstream.json()
+            except requests.RequestException as e:
+                self.send_json_error(f"RPC fetch failed: {e}", 502)
+                return
+            except ValueError:
+                self.send_json_error("RPC returned non-JSON", 502)
+                return
+            # Pass the JSON-RPC envelope through verbatim; the browser reads
+            # .result / .error exactly as it did from the direct RPC call.
+            self.send_json_response(payload)
+        except Exception as e:
+            print(f"[VERIFY-ERROR] {e!r}")
             self.send_json_error("Internal server error", 500)
 
     def send_json_response(self, data, status=200):
